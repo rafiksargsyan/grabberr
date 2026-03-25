@@ -1,0 +1,23 @@
+package com.rsargsyan.grabberr.main_ctx.core.domain.aggregate;
+
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.MappedSuperclass;
+import lombok.Getter;
+
+@MappedSuperclass
+public abstract class AccountScopedAggregateRoot extends AggregateRoot {
+
+  @Getter
+  @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "account_id", nullable = false)
+  private Account account;
+
+  protected AccountScopedAggregateRoot() {}
+
+  protected AccountScopedAggregateRoot(Account account) {
+    if (account == null) throw new IllegalArgumentException("Account can't be null");
+    this.account = account;
+  }
+}
