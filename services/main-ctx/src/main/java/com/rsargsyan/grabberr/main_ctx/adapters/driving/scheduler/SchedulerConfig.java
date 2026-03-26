@@ -1,9 +1,8 @@
-package com.rsargsyan.grabberr.main_ctx.scheduling;
+package com.rsargsyan.grabberr.main_ctx.adapters.driving.scheduler;
 
 import com.github.kagkarlsson.scheduler.task.helper.RecurringTask;
 import com.github.kagkarlsson.scheduler.task.helper.Tasks;
 import com.github.kagkarlsson.scheduler.task.schedule.FixedDelay;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

@@ -31,6 +31,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     implementation 'commons-codec:commons-codec:1.17.1'
+    implementation platform('software.amazon.awssdk:bom:2.29.51')
+    implementation 'software.amazon.awssdk:s3'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

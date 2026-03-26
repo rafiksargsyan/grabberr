@@ -1,6 +1,6 @@
 package com.rsargsyan.grabberr.main_ctx.core.app.dto;
 
-import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.FileDownload;
+import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.CachedFile;
 import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.FileDownloadStatus;
 
 import java.time.Instant;
@@ -9,20 +9,24 @@ public record FileDownloadDTO(
     String id,
     Integer fileIndex,
     FileDownloadStatus status,
+    Float progress,
+    Long etaSeconds,
     String signedUrl,
     Long fileSizeBytes,
     Instant completedAt,
     Instant createdAt
 ) {
-  public static FileDownloadDTO from(FileDownload fd, String signedUrl) {
+  public static FileDownloadDTO from(CachedFile cf, String signedUrl) {
     return new FileDownloadDTO(
-        fd.getStrId(),
-        fd.getFileIndex(),
-        fd.getCachedFile().getStatus(),
+        cf.getStrId(),
+        cf.getFileIndex(),
+        cf.getStatus(),
+        cf.getProgress(),
+        cf.getEtaSeconds(),
         signedUrl,
-        fd.getCachedFile().getFileSizeBytes(),
-        fd.getCachedFile().getCompletedAt(),
-        fd.getCreatedAt()
+        cf.getFileSizeBytes(),
+        cf.getCompletedAt(),
+        cf.getCreatedAt()
     );
   }
 }

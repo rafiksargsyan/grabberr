@@ -1,14 +1,14 @@
 package com.rsargsyan.grabberr.main_ctx.adapters.driven.qbittorrent;
 
+import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.FileProgress;
 import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.TorrentFile;
 import com.rsargsyan.grabberr.main_ctx.core.ports.client.TorrentClient;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
+@Slf4j
 @Component
 public class QBittorrentClient implements TorrentClient {
 
@@ -29,7 +30,6 @@ public class QBittorrentClient implements TorrentClient {
       float progress
   ) {}
 
-  private static final Logger log = LoggerFactory.getLogger(QBittorrentClient.class);
 
   @Value("${grabberr.qbittorrent.url}")
   private String baseUrl;
@@ -52,7 +52,7 @@ public class QBittorrentClient implements TorrentClient {
 
   @Override
   public void addTorrent(String infoHash, String downloadUrl) {
-    String body = "urls=" + encode(downloadUrl) + "&savepath=/downloads";
+    String body = "urls=" + encode(downloadUrl) + "&savepath=/downloads&stopCondition=MetadataReceived";
     var response = postFormWithResponse("/api/v2/torrents/add", body);
     logAddResponse(infoHash, response);
   }
@@ -94,6 +94,12 @@ public class QBittorrentClient implements TorrentClient {
       out.write("Content-Disposition: form-data; name=\"savepath\"".getBytes(StandardCharsets.UTF_8)); out.write(crlf);
       out.write(crlf);
       out.write("/downloads".getBytes(StandardCharsets.UTF_8)); out.write(crlf);
+
+      // stopCondition part
+      out.write(dashdash); out.write(boundary.getBytes(StandardCharsets.UTF_8)); out.write(crlf);
+      out.write("Content-Disposition: form-data; name=\"stopCondition\"".getBytes(StandardCharsets.UTF_8)); out.write(crlf);
+      out.write(crlf);
+      out.write("MetadataReceived".getBytes(StandardCharsets.UTF_8)); out.write(crlf);
 
       // closing boundary
       out.write(dashdash); out.write(boundary.getBytes(StandardCharsets.UTF_8)); out.write(dashdash); out.write(crlf);
@@ -140,13 +146,32 @@ public class QBittorrentClient implements TorrentClient {
   }
 
   @Override
-  public void enableFile(String infoHash, int fileIndex) {
+  public void disableAllFiles(String infoHash, List<Integer> fileIndices) {
+    String ids = fileIndices.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining("|"));
     postForm("/api/v2/torrents/filePrio",
-        "hash=" + infoHash + "&id=" + fileIndex + "&priority=1");
+        "hash=" + infoHash + "&id=" + ids + "&priority=0");
   }
 
   @Override
-  public float getFileProgress(String infoHash, int fileIndex) {
+  public byte[] exportTorrent(String infoHash) {
+    return withSession(sid ->
+        restClient.get()
+            .uri("/api/v2/torrents/export?hash={hash}", infoHash)
+            .header(HttpHeaders.COOKIE, "SID=" + sid)
+            .retrieve()
+            .body(byte[].class)
+    );
+  }
+
+  @Override
+  public void enableFile(String infoHash, int fileIndex) {
+    postForm("/api/v2/torrents/filePrio",
+        "hash=" + infoHash + "&id=" + fileIndex + "&priority=1");
+    postForm("/api/v2/torrents/start", "hashes=" + infoHash);
+  }
+
+  @Override
+  public FileProgress getFileProgress(String infoHash, int fileIndex) {
     List<QbtFile> files = withSession(sid ->
         restClient.get()
             .uri("/api/v2/torrents/files?hash={hash}", infoHash)
@@ -154,12 +179,12 @@ public class QBittorrentClient implements TorrentClient {
             .retrieve()
             .body(new org.springframework.core.ParameterizedTypeReference<List<QbtFile>>() {})
     );
-    if (files == null) return 0f;
-    return files.stream()
+    float progress = files == null ? 0f : files.stream()
         .filter(f -> f.index() == fileIndex)
         .map(QbtFile::progress)
         .findFirst()
         .orElse(0f);
+    return new FileProgress(progress);
   }
 
   @Override

@@ -7,6 +7,7 @@ import { Login } from '../pages/Login';
 import { Dashboard } from '../pages/Dashboard';
 import { Submit } from '../pages/Submit';
 import { TorrentDownloadDetail } from '../pages/TorrentDownloadDetail';
+import { ApiKeys } from '../pages/ApiKeys';
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/submit" element={<Submit />} />
             <Route path="/torrent-download/:id" element={<TorrentDownloadDetail />} />
+            <Route path="/api-keys" element={<ApiKeys />} />
           </Route>
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

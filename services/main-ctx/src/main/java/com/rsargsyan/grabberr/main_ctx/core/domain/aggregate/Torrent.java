@@ -21,6 +21,10 @@ public class Torrent extends AggregateRoot {
   private String downloadUrl; // null when submitted as an uploaded file
 
   @Getter
+  private String torrentS3Key; // set once .torrent file is stored in S3
+
+
+  @Getter
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 30)
   private TorrentStatus status = TorrentStatus.FETCHING_METADATA;
@@ -38,6 +42,11 @@ public class Torrent extends AggregateRoot {
     this.downloadUrl = downloadUrl;
   }
 
+  public void setTorrentS3Key(String torrentS3Key) {
+    this.torrentS3Key = torrentS3Key;
+    touch();
+  }
+
   public void markReady(List<TorrentFile> files) {
     this.files = new ArrayList<>(files);
     this.status = TorrentStatus.READY;
@@ -48,4 +57,5 @@ public class Torrent extends AggregateRoot {
     this.status = TorrentStatus.FAILED;
     touch();
   }
+
 }

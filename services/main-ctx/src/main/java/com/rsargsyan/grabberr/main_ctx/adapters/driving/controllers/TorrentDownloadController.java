@@ -53,6 +53,12 @@ public class TorrentDownloadController {
     return ResponseEntity.ok(torrentDownloadService.getStatus(id, accountId));
   }
 
+  @GetMapping("/{id}/file")
+  public ResponseEntity<List<FileDownloadDTO>> listFileDownloads(@PathVariable String id) {
+    String accountId = UserContextHolder.get().getAccountId();
+    return ResponseEntity.ok(fileDownloadService.list(id, accountId));
+  }
+
   @PutMapping("/{id}/file/{fileIndex}")
   public ResponseEntity<FileDownloadDTO> claimFile(@PathVariable String id,
                                                    @PathVariable int fileIndex) {

@@ -1,6 +1,5 @@
 package com.rsargsyan.grabberr.main_ctx.core.app;
 
-import com.rsargsyan.grabberr.main_ctx.core.Util;
 import com.rsargsyan.grabberr.main_ctx.core.app.dto.ApiKeyCreationDTO;
 import com.rsargsyan.grabberr.main_ctx.core.app.dto.ApiKeyDTO;
 import com.rsargsyan.grabberr.main_ctx.core.app.dto.UserDTO;
@@ -9,6 +8,7 @@ import com.rsargsyan.grabberr.main_ctx.core.exception.ApiKeyNotDisabledException
 import com.rsargsyan.grabberr.main_ctx.core.exception.AuthorizationException;
 import com.rsargsyan.grabberr.main_ctx.core.exception.ResourceNotFoundException;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.*;
+import com.rsargsyan.grabberr.main_ctx.core.domain.service.TSIDValidator;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -53,17 +53,15 @@ public class UserService {
   }
 
   public List<ApiKeyDTO> listApiKeys(String actingUserId, String userProfileIdStr) {
-    Long userProfileId = Util.validateTSID(userProfileIdStr);
     if (!userProfileIdStr.equals(actingUserId)) throw new AuthorizationException();
-    return apiKeyRepository.findByUserProfileId(userProfileId).stream()
+    return apiKeyRepository.findByUserProfileId(TSIDValidator.validate(userProfileIdStr)).stream()
         .map(ApiKeyDTO::from).toList();
   }
 
   @Transactional
   public ApiKeyDTO createApiKey(String actingUserId, String userProfileIdStr, String description) {
-    Long userProfileId = Util.validateTSID(userProfileIdStr);
     if (!userProfileIdStr.equals(actingUserId)) throw new AuthorizationException();
-    UserProfile userProfile = userProfileRepository.findById(userProfileId)
+    UserProfile userProfile = userProfileRepository.findById(TSIDValidator.validate(userProfileIdStr))
         .orElseThrow(ResourceNotFoundException::new);
     String key = userProfile.createApiKey(description);
     userProfileRepository.save(userProfile);
@@ -73,10 +71,9 @@ public class UserService {
 
   @Transactional
   public ApiKeyDTO disableApiKey(String actingUserId, String userProfileIdStr, String apiKeyIdStr) {
-    Long userProfileId = Util.validateTSID(userProfileIdStr);
-    Long apiKeyId = Util.validateTSID(apiKeyIdStr);
     if (!userProfileIdStr.equals(actingUserId)) throw new AuthorizationException();
-    ApiKey apiKey = apiKeyRepository.findByIdAndUserProfileId(apiKeyId, userProfileId)
+    ApiKey apiKey = apiKeyRepository.findByIdAndUserProfileId(
+            TSIDValidator.validate(apiKeyIdStr), TSIDValidator.validate(userProfileIdStr))
         .orElseThrow(ResourceNotFoundException::new);
     apiKey.disable();
     apiKeyRepository.save(apiKey);
@@ -85,10 +82,9 @@ public class UserService {
 
   @Transactional
   public ApiKeyDTO enableApiKey(String actingUserId, String userProfileIdStr, String apiKeyIdStr) {
-    Long userProfileId = Util.validateTSID(userProfileIdStr);
-    Long apiKeyId = Util.validateTSID(apiKeyIdStr);
     if (!userProfileIdStr.equals(actingUserId)) throw new AuthorizationException();
-    ApiKey apiKey = apiKeyRepository.findByIdAndUserProfileId(apiKeyId, userProfileId)
+    ApiKey apiKey = apiKeyRepository.findByIdAndUserProfileId(
+            TSIDValidator.validate(apiKeyIdStr), TSIDValidator.validate(userProfileIdStr))
         .orElseThrow(ResourceNotFoundException::new);
     apiKey.enable();
     apiKeyRepository.save(apiKey);
@@ -97,10 +93,10 @@ public class UserService {
 
   @Transactional
   public void deleteApiKey(String actingUserId, String userProfileIdStr, String apiKeyIdStr) {
-    Long userProfileId = Util.validateTSID(userProfileIdStr);
-    Long apiKeyId = Util.validateTSID(apiKeyIdStr);
     if (!userProfileIdStr.equals(actingUserId)) throw new AuthorizationException();
-    ApiKey apiKey = apiKeyRepository.findByIdAndUserProfileId(apiKeyId, userProfileId)
+    Long apiKeyId = TSIDValidator.validate(apiKeyIdStr);
+    ApiKey apiKey = apiKeyRepository.findByIdAndUserProfileId(
+            apiKeyId, TSIDValidator.validate(userProfileIdStr))
         .orElseThrow(ResourceNotFoundException::new);
     if (!apiKey.isDisabled()) throw new ApiKeyNotDisabledException();
     apiKeyRepository.deleteById(apiKeyId);

@@ -4,6 +4,14 @@ export interface UserDTO {
   accountId: string;
 }
 
+export interface ApiKeyDTO {
+  id: string;
+  key: string | null;
+  description: string;
+  disabled: boolean;
+  lastAccessTime: string | null;
+}
+
 export type TorrentStatus = 'FETCHING_METADATA' | 'READY' | 'FAILED';
 export type FileDownloadStatus = 'DOWNLOADING' | 'DONE' | 'FAILED';
 

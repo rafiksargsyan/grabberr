@@ -19,7 +19,7 @@ import {
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import { useAuth } from '../hooks/useAuth';
-import { getTorrentDownload, claimFile, getFileDownload } from '../api/torrentDownloads';
+import { getTorrentDownload, listFileDownloads, claimFile, getFileDownload } from '../api/torrentDownloads';
 import type { TorrentDownloadDTO, FileDownloadDTO, TorrentStatus, FileDownloadStatus } from '../types/api.types';
 
 function TorrentStatusChip({ status }: { status: TorrentStatus }) {
@@ -60,10 +60,18 @@ export function TorrentDownloadDetail() {
     setFileDownloads((prev) => ({ ...prev, [fileIndex]: data }));
   }, [id, user, accountId]);
 
-  // Initial load + poll torrent status while FETCHING_METADATA
+  // Initial load
   useEffect(() => {
+    if (!id || !user || !accountId) return;
     fetchTorrent().catch(console.error);
-  }, [fetchTorrent]);
+    listFileDownloads(id, user, accountId)
+      .then((list) => {
+        const map: Record<number, FileDownloadDTO> = {};
+        list.forEach((fd) => { map[fd.fileIndex] = fd; });
+        setFileDownloads(map);
+      })
+      .catch(console.error);
+  }, [id, user, accountId, fetchTorrent]);
 
   useEffect(() => {
     if (!torrent || torrent.status !== 'FETCHING_METADATA') return;
@@ -180,10 +188,20 @@ export function TorrentDownloadDetail() {
                           >
                             Download
                           </Button>
+                        ) : fd?.status === 'SUBMITTED' ? (
+                          <Box display="flex" alignItems="center" gap={1}>
+                            <CircularProgress size={16} />
+                            <Typography variant="body2">Queued…</Typography>
+                          </Box>
                         ) : fd?.status === 'DOWNLOADING' ? (
                           <Box display="flex" alignItems="center" gap={1}>
                             <CircularProgress size={16} />
                             <Typography variant="body2">Downloading…</Typography>
+                          </Box>
+                        ) : fd?.status === 'TRANSFERRING' ? (
+                          <Box display="flex" alignItems="center" gap={1}>
+                            <CircularProgress size={16} />
+                            <Typography variant="body2">Transferring…</Typography>
                           </Box>
                         ) : fd?.status === 'FAILED' ? (
                           <Button size="small" onClick={() => handleClaim(f.index)} disabled={claiming[f.index]}>
