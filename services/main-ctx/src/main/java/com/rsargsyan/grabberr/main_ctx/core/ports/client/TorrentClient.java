@@ -16,4 +16,6 @@ public interface TorrentClient {
   FileProgress getFileProgress(String infoHash, int fileIndex);
   String getRelativeFilePath(String infoHash, int fileIndex);
   void removeTorrent(String infoHash, boolean deleteFiles);
+  long getFreeSpaceBytes();
+  Optional<String> getTorrentState(String infoHash);
 }

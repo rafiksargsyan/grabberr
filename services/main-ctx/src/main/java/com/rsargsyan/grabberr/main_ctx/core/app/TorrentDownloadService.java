@@ -26,13 +26,17 @@ import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
 public class TorrentDownloadService {
 
-  @Value("${grabberr.metadata-timeout:PT2H}")
-  private Duration metadataTimeout;
+  @Value("${grabberr.queued-timeout:PT2H}")
+  private Duration queuedTimeout;
+
+  @Value("${grabberr.fetching-metadata-timeout:PT5M}")
+  private Duration fetchingMetadataTimeout;
 
   private final TorrentRepository torrentRepository;
   private final TorrentDownloadRepository torrentDownloadRepository;
@@ -43,6 +47,10 @@ public class TorrentDownloadService {
   @Lazy
   @Autowired
   private TorrentDownloadService self;
+
+  @Lazy
+  @Autowired
+  private FileDownloadService fileDownloadService;
 
   @Autowired
   public TorrentDownloadService(TorrentRepository torrentRepository,
@@ -101,8 +109,36 @@ public class TorrentDownloadService {
         .orElseThrow(ResourceNotFoundException::new);
   }
 
+  public TorrentDownloadDTO getStatusByInfoHash(String infoHash, String accountIdStr) {
+    return torrentDownloadRepository.findByTorrent_InfoHashAndAccount_Id(infoHash, TSIDValidator.validate(accountIdStr))
+        .map(TorrentDownloadDTO::from)
+        .orElseThrow(ResourceNotFoundException::new);
+  }
+
+  @Transactional
+  public void delete(String torrentDownloadIdStr, String accountIdStr) {
+    TorrentDownload torrentDownload = torrentDownloadRepository
+        .findByIdAndAccount_Id(TSIDValidator.validate(torrentDownloadIdStr), TSIDValidator.validate(accountIdStr))
+        .orElseThrow(ResourceNotFoundException::new);
+
+    Torrent torrent = torrentDownload.getTorrent();
+
+    fileDownloadService.cancelClaimsForAccount(torrent.getId(), TSIDValidator.validate(accountIdStr));
+
+    torrentDownloadRepository.delete(torrentDownload);
+
+    if (!torrentDownloadRepository.existsByTorrent_Id(torrent.getId())
+        && torrent.getStatus() == TorrentStatus.FETCHING_METADATA) {
+      log.info("No more claims on torrent [{}] in FETCHING_METADATA, removing", torrent.getInfoHash());
+      torrent.markFailed();
+      torrentRepository.save(torrent);
+      torrentClient.removeTorrent(torrent.getInfoHash(), false);
+    }
+  }
+
   public void pollMetadata() {
-    List<Long> ids = torrentRepository.findIdsByStatus(TorrentStatus.FETCHING_METADATA);
+    List<Long> ids = torrentRepository.findIdsByStatusIn(
+        List.of(TorrentStatus.QUEUED, TorrentStatus.FETCHING_METADATA));
     log.info("MetadataPolling: {} torrent(s) pending", ids.size());
     for (Long id : ids) {
       String strId = Util.tsidToString(id);
@@ -117,36 +153,77 @@ public class TorrentDownloadService {
   @Transactional
   public void processTorrentMetadata(String torrentIdStr) {
     Torrent torrent = torrentRepository.findById(TSIDValidator.validate(torrentIdStr)).orElse(null);
-    if (torrent == null || torrent.getStatus() != TorrentStatus.FETCHING_METADATA) return;
-    log.info("Polling torrent [{}]", torrent.getInfoHash());
-    if (torrent.getCreatedAt().plus(metadataTimeout).isBefore(Instant.now())) {
-      log.warn("Torrent [{}] timed out, marking failed", torrent.getInfoHash());
+    if (torrent == null) return;
+    if (torrent.getStatus() != TorrentStatus.QUEUED && torrent.getStatus() != TorrentStatus.FETCHING_METADATA) return;
+
+    log.info("Polling torrent [{}] status={}", torrent.getInfoHash(), torrent.getStatus());
+
+    Duration timeout = torrent.getStatus() == TorrentStatus.QUEUED ? queuedTimeout : fetchingMetadataTimeout;
+    if (torrent.getCreatedAt().plus(timeout).isBefore(Instant.now())) {
+      log.warn("Torrent [{}] timed out in {} state, marking failed", torrent.getInfoHash(), torrent.getStatus());
       torrent.markFailed();
       torrentClient.removeTorrent(torrent.getInfoHash(), false);
-    } else {
-      var files = torrentClient.getFiles(torrent.getInfoHash());
-      log.info("Torrent [{}] getFiles result: {}", torrent.getInfoHash(), files);
-      files.ifPresent(fileList -> {
-        List<Integer> indices = fileList.stream().map(f -> f.index()).toList();
-        try {
-          torrentClient.disableAllFiles(torrent.getInfoHash(), indices);
-        } catch (Exception e) {
-          log.warn("disableAllFiles [{}]: failed, continuing", torrent.getInfoHash(), e);
-        }
-        torrent.markReady(fileList);
-        if (torrent.getTorrentS3Key() == null && torrent.getDownloadUrl() != null
-            && !torrent.getDownloadUrl().startsWith("magnet:")) {
-          try {
-            byte[] torrentBytes = URI.create(torrent.getDownloadUrl()).toURL().openStream().readAllBytes();
-            String s3Key = torrentS3Key(torrent.getInfoHash());
-            objectStorageClient.upload(s3Key, torrentBytes, "application/x-bittorrent");
-            torrent.setTorrentS3Key(s3Key);
-          } catch (Exception e) {
-            log.warn("Failed to fetch/upload torrent [{}] to S3, will retry next poll", torrent.getInfoHash(), e);
-          }
-        }
-      });
+      torrentRepository.save(torrent);
+      return;
     }
+
+    Optional<String> qbtState = torrentClient.getTorrentState(torrent.getInfoHash());
+    log.info("Torrent [{}] qBittorrent state: {}", torrent.getInfoHash(), qbtState.orElse("not found"));
+
+    if (qbtState.isEmpty()) {
+      // Not found in qBittorrent — re-add
+      log.warn("Torrent [{}] not found in qBittorrent, re-adding", torrent.getInfoHash());
+      try {
+        if (torrent.getTorrentS3Key() != null) {
+          torrentClient.addTorrent(torrent.getInfoHash(), objectStorageClient.download(torrent.getTorrentS3Key()));
+        } else if (torrent.getDownloadUrl() != null) {
+          torrentClient.addTorrent(torrent.getInfoHash(), torrent.getDownloadUrl());
+        } else {
+          log.error("Torrent [{}] has no download URL or S3 key, cannot re-add", torrent.getInfoHash());
+        }
+      } catch (Exception e) {
+        log.error("Failed to re-add torrent [{}] to qBittorrent", torrent.getInfoHash(), e);
+      }
+      torrentRepository.save(torrent);
+      return;
+    }
+
+    String state = qbtState.get();
+
+    if ("metaDL".equals(state)) {
+      if (torrent.getStatus() == TorrentStatus.QUEUED) {
+        log.info("Torrent [{}] started fetching metadata", torrent.getInfoHash());
+        torrent.markFetchingMetadata();
+      }
+      torrentRepository.save(torrent);
+      return;
+    }
+
+    // Any other active state — try to get files (covers torrent files that are instantly ready)
+    var files = torrentClient.getFiles(torrent.getInfoHash());
+    if (files.isPresent() && !files.get().isEmpty()) {
+      List<Integer> indices = files.get().stream().map(f -> f.index()).toList();
+      try {
+        torrentClient.disableAllFiles(torrent.getInfoHash(), indices);
+      } catch (Exception e) {
+        log.warn("disableAllFiles [{}]: failed, continuing", torrent.getInfoHash(), e);
+      }
+      torrent.markReady(files.get());
+      if (torrent.getTorrentS3Key() == null && torrent.getDownloadUrl() != null
+          && !torrent.getDownloadUrl().startsWith("magnet:")) {
+        try {
+          byte[] torrentBytes = URI.create(torrent.getDownloadUrl()).toURL().openStream().readAllBytes();
+          String s3Key = torrentS3Key(torrent.getInfoHash());
+          objectStorageClient.upload(s3Key, torrentBytes, "application/x-bittorrent");
+          torrent.setTorrentS3Key(s3Key);
+        } catch (Exception e) {
+          log.warn("Failed to fetch/upload torrent [{}] to S3, will retry next poll", torrent.getInfoHash(), e);
+        }
+      }
+    } else {
+      log.debug("Torrent [{}] state={} no files yet, waiting", torrent.getInfoHash(), state);
+    }
+
     torrentRepository.save(torrent);
   }
 

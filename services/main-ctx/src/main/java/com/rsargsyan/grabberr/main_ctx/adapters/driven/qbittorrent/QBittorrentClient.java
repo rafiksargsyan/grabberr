@@ -30,6 +30,10 @@ public class QBittorrentClient implements TorrentClient {
       float progress
   ) {}
 
+  private record QbtMainData(QbtServerState server_state) {}
+  private record QbtServerState(long free_space_on_disk) {}
+  private record QbtTorrentInfo(String state) {}
+
 
   @Value("${grabberr.qbittorrent.url}")
   private String baseUrl;
@@ -210,6 +214,36 @@ public class QBittorrentClient implements TorrentClient {
         "hashes=" + infoHash + "&deleteFiles=" + deleteFiles);
   }
 
+  @Override
+  public Optional<String> getTorrentState(String infoHash) {
+    try {
+      List<QbtTorrentInfo> result = withSession(sid ->
+          restClient.get()
+              .uri("/api/v2/torrents/info?hashes={hash}", infoHash)
+              .header(HttpHeaders.COOKIE, "SID=" + sid)
+              .retrieve()
+              .body(new org.springframework.core.ParameterizedTypeReference<List<QbtTorrentInfo>>() {})
+      );
+      if (result == null || result.isEmpty()) return Optional.empty();
+      return Optional.ofNullable(result.get(0).state());
+    } catch (Exception e) {
+      log.error("getTorrentState [{}]: unexpected error", infoHash, e);
+      return Optional.empty();
+    }
+  }
+
+  @Override
+  public long getFreeSpaceBytes() {
+    QbtMainData data = withSession(sid ->
+        restClient.get()
+            .uri("/api/v2/sync/maindata")
+            .header(HttpHeaders.COOKIE, "SID=" + sid)
+            .retrieve()
+            .body(QbtMainData.class)
+    );
+    return data != null ? data.server_state().free_space_on_disk() : 0L;
+  }
+
   private void postForm(String uri, String body) {
     postFormWithResponse(uri, body);
   }
@@ -229,12 +263,25 @@ public class QBittorrentClient implements TorrentClient {
 
   private <T> T withSession(java.util.function.Function<String, T> action) {
     String currentSid = ensureSid();
-    var response = action.apply(currentSid);
-    return response;
+    try {
+      return action.apply(currentSid);
+    } catch (HttpClientErrorException e) {
+      if (e.getStatusCode().value() == 403) {
+        log.warn("qBittorrent returned 403 — session expired, re-logging in");
+        String freshSid = relogin();
+        return action.apply(freshSid);
+      }
+      throw e;
+    }
   }
 
   private synchronized String ensureSid() {
     if (sid != null) return sid;
+    return login();
+  }
+
+  private synchronized String relogin() {
+    sid = null;
     return login();
   }
 

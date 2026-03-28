@@ -4,7 +4,6 @@ import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.FileDownloadStatu
 import jakarta.persistence.*;
 import lombok.Getter;
 
-import java.time.Duration;
 import java.time.Instant;
 
 @Entity
@@ -30,9 +29,8 @@ public class CachedFile extends AggregateRoot {
   @Getter private Long fileSizeBytes;
 
   @Getter private Float progress;
-  @Getter private Long etaSeconds;
-  private Instant lastProgressAt;
 
+  @Getter private Instant downloadingAt;
   @Getter private Instant completedAt;
   @Getter private Instant lastPolledAt;
 
@@ -44,23 +42,14 @@ public class CachedFile extends AggregateRoot {
     this.fileIndex = fileIndex;
   }
 
-  public void updateProgress(float newProgress, long totalSizeBytes) {
-    Instant now = Instant.now();
-    if (lastProgressAt != null && progress != null && newProgress > progress && totalSizeBytes > 0) {
-      double elapsedSeconds = Duration.between(lastProgressAt, now).toMillis() / 1000.0;
-      if (elapsedSeconds > 0) {
-        double bytesPerSec = (newProgress - progress) * totalSizeBytes / elapsedSeconds;
-        double remainingBytes = (1.0 - newProgress) * totalSizeBytes;
-        this.etaSeconds = bytesPerSec > 0 ? (long) (remainingBytes / bytesPerSec) : null;
-      }
-    }
+  public void updateProgress(float newProgress) {
     this.progress = newProgress;
-    this.lastProgressAt = now;
     touch();
   }
 
   public void markDownloading() {
     this.status = FileDownloadStatus.DOWNLOADING;
+    this.downloadingAt = Instant.now();
     touch();
   }
 

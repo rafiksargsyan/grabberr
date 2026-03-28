@@ -10,11 +10,11 @@ public record FileDownloadDTO(
     Integer fileIndex,
     FileDownloadStatus status,
     Float progress,
-    Long etaSeconds,
     String signedUrl,
     Long fileSizeBytes,
     Instant completedAt,
-    Instant createdAt
+    Instant createdAt,
+    Instant downloadingAt
 ) {
   public static FileDownloadDTO from(CachedFile cf, String signedUrl) {
     return new FileDownloadDTO(
@@ -22,11 +22,11 @@ public record FileDownloadDTO(
         cf.getFileIndex(),
         cf.getStatus(),
         cf.getProgress(),
-        cf.getEtaSeconds(),
         signedUrl,
         cf.getFileSizeBytes(),
         cf.getCompletedAt(),
-        cf.getCreatedAt()
+        cf.getCreatedAt(),
+        cf.getDownloadingAt()
     );
   }
 }

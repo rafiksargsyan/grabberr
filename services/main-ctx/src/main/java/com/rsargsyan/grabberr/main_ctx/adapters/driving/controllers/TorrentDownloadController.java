@@ -47,6 +47,12 @@ public class TorrentDownloadController {
     return new ResponseEntity<>(torrentDownloadService.submitByFile(file.getBytes(), accountId), HttpStatus.CREATED);
   }
 
+  @GetMapping("/by-hash/{infoHash}")
+  public ResponseEntity<TorrentDownloadDTO> getStatusByInfoHash(@PathVariable String infoHash) {
+    String accountId = UserContextHolder.get().getAccountId();
+    return ResponseEntity.ok(torrentDownloadService.getStatusByInfoHash(infoHash, accountId));
+  }
+
   @GetMapping("/{id}")
   public ResponseEntity<TorrentDownloadDTO> getStatus(@PathVariable String id) {
     String accountId = UserContextHolder.get().getAccountId();
@@ -71,5 +77,20 @@ public class TorrentDownloadController {
                                                        @PathVariable int fileIndex) {
     String accountId = UserContextHolder.get().getAccountId();
     return ResponseEntity.ok(fileDownloadService.getStatus(id, fileIndex, accountId));
+  }
+
+  @DeleteMapping("/{id}/file/{fileIndex}")
+  public ResponseEntity<Void> unclaimFile(@PathVariable String id,
+                                          @PathVariable int fileIndex) {
+    String accountId = UserContextHolder.get().getAccountId();
+    fileDownloadService.unclaim(id, fileIndex, accountId);
+    return ResponseEntity.noContent().build();
+  }
+
+  @DeleteMapping("/{id}")
+  public ResponseEntity<Void> deleteTorrentDownload(@PathVariable String id) {
+    String accountId = UserContextHolder.get().getAccountId();
+    torrentDownloadService.delete(id, accountId);
+    return ResponseEntity.noContent().build();
   }
 }

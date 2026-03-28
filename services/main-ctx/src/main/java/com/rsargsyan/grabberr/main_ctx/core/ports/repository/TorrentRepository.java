@@ -12,4 +12,6 @@ public interface TorrentRepository extends JpaRepository<Torrent, Long> {
   Optional<Torrent> findByInfoHash(String infoHash);
   @Query("SELECT t.id FROM Torrent t WHERE t.status = :status")
   List<Long> findIdsByStatus(TorrentStatus status);
+  @Query("SELECT t.id FROM Torrent t WHERE t.status IN :statuses")
+  List<Long> findIdsByStatusIn(List<TorrentStatus> statuses);
 }

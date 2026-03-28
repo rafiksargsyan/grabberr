@@ -8,5 +8,7 @@ import java.util.Optional;
 
 public interface TorrentDownloadRepository extends JpaRepository<TorrentDownload, Long> {
   Optional<TorrentDownload> findByIdAndAccount_Id(Long id, Long accountId);
+  Optional<TorrentDownload> findByTorrent_InfoHashAndAccount_Id(String infoHash, Long accountId);
   List<TorrentDownload> findByAccount_IdOrderByCreatedAtDesc(Long accountId);
+  boolean existsByTorrent_Id(Long torrentId);
 }

@@ -15,6 +15,10 @@ import com.rsargsyan.grabberr.main_ctx.core.exception.TorrentNotReadyException;
 import com.rsargsyan.grabberr.main_ctx.core.ports.client.FileTransferClient;
 import com.rsargsyan.grabberr.main_ctx.core.ports.client.ObjectStorageClient;
 import com.rsargsyan.grabberr.main_ctx.core.ports.client.TorrentClient;
+import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.Account;
+import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.CachedFileClaim;
+import com.rsargsyan.grabberr.main_ctx.core.ports.repository.AccountRepository;
+import com.rsargsyan.grabberr.main_ctx.core.ports.repository.CachedFileClaimRepository;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.CachedFileRepository;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.TorrentDownloadRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -36,8 +40,13 @@ public class FileDownloadService {
   @Value("${grabberr.download-timeout:PT24H}")
   private Duration downloadTimeout;
 
+  @Value("${grabberr.min-free-space-bytes:10737418240}")
+  private long minFreeSpaceBytes;
+
   private final TorrentDownloadRepository torrentDownloadRepository;
   private final CachedFileRepository cachedFileRepository;
+  private final CachedFileClaimRepository cachedFileClaimRepository;
+  private final AccountRepository accountRepository;
   private final TorrentClient torrentClient;
   private final FileTransferClient fileTransferClient;
   private final ObjectStorageClient objectStorageClient;
@@ -50,12 +59,16 @@ public class FileDownloadService {
   @Autowired
   public FileDownloadService(TorrentDownloadRepository torrentDownloadRepository,
                              CachedFileRepository cachedFileRepository,
+                             CachedFileClaimRepository cachedFileClaimRepository,
+                             AccountRepository accountRepository,
                              TorrentClient torrentClient,
                              FileTransferClient fileTransferClient,
                              ObjectStorageClient objectStorageClient,
                              ApplicationEventPublisher eventPublisher) {
     this.torrentDownloadRepository = torrentDownloadRepository;
     this.cachedFileRepository = cachedFileRepository;
+    this.cachedFileClaimRepository = cachedFileClaimRepository;
+    this.accountRepository = accountRepository;
     this.torrentClient = torrentClient;
     this.fileTransferClient = fileTransferClient;
     this.objectStorageClient = objectStorageClient;
@@ -76,6 +89,9 @@ public class FileDownloadService {
       throw new InvalidFileIndexException();
     }
 
+    Account account = accountRepository.findById(TSIDValidator.validate(accountIdStr))
+        .orElseThrow(ResourceNotFoundException::new);
+
     CachedFile cachedFile = cachedFileRepository
         .findByTorrentIdAndFileIndex(torrentDownload.getTorrent().getId(), fileIndex)
         .orElseGet(() -> {
@@ -84,7 +100,25 @@ public class FileDownloadService {
           eventPublisher.publishEvent(new CachedFileSubmittedEvent(cf.getId()));
           return cf;
         });
+
+    cachedFileClaimRepository.findByCachedFile_IdAndAccount_Id(cachedFile.getId(), account.getId())
+        .orElseGet(() -> cachedFileClaimRepository.save(new CachedFileClaim(account, cachedFile)));
+
     return toDTO(cachedFile);
+  }
+
+  @Transactional
+  public void unclaim(String torrentDownloadIdStr, int fileIndex, String accountIdStr) {
+    TorrentDownload torrentDownload = findTorrentDownload(torrentDownloadIdStr, accountIdStr);
+    Long accountId = TSIDValidator.validate(accountIdStr);
+
+    cachedFileRepository
+        .findByTorrentIdAndFileIndex(torrentDownload.getTorrent().getId(), fileIndex)
+        .ifPresent(cf -> {
+          cachedFileClaimRepository.findByCachedFile_IdAndAccount_Id(cf.getId(), accountId)
+              .ifPresent(cachedFileClaimRepository::delete);
+          cancelIfNoClaims(cf);
+        });
   }
 
   public List<FileDownloadDTO> list(String torrentDownloadIdStr, String accountIdStr) {
@@ -100,6 +134,25 @@ public class FileDownloadService {
         .findByTorrentIdAndFileIndex(torrentDownload.getTorrent().getId(), fileIndex)
         .map(this::toDTO)
         .orElseThrow(ResourceNotFoundException::new);
+  }
+
+  @Transactional
+  public void cancelClaimsForAccount(Long torrentId, Long accountId) {
+    cachedFileClaimRepository.deleteByAccount_IdAndCachedFile_TorrentId(accountId, torrentId);
+    cachedFileRepository.findByTorrentId(torrentId).forEach(this::cancelIfNoClaims);
+  }
+
+  private void cancelIfNoClaims(CachedFile cf) {
+    if (cf.getStatus() == FileDownloadStatus.DONE) return;
+    if (!cachedFileClaimRepository.existsByCachedFile_Id(cf.getId())) {
+      log.info("CachedFile [{}] has no remaining claims, deleting", cf.getId());
+      cachedFileRepository.delete(cf);
+      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(
+          cf.getTorrent().getId(), List.of(FileDownloadStatus.SUBMITTED, FileDownloadStatus.DOWNLOADING, FileDownloadStatus.TRANSFERRING));
+      if (!anyActive) {
+        torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+      }
+    }
   }
 
   public void pollFileDownloads() {
@@ -155,6 +208,17 @@ public class FileDownloadService {
       List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
       torrentClient.disableAllFiles(torrent.getInfoHash(), allIndices);
     }
+    long fileSize = torrent.getFiles().stream()
+        .filter(f -> f.index() == cf.getFileIndex())
+        .mapToLong(com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.TorrentFile::sizeBytes)
+        .findFirst().orElse(0L);
+    long freeSpace = torrentClient.getFreeSpaceBytes();
+    if (freeSpace - fileSize < minFreeSpaceBytes) {
+      log.warn("Not enough disk space to enable file for cachedFile=[{}]: freeSpace={} fileSize={} minFree={}",
+          cf.getId(), freeSpace, fileSize, minFreeSpaceBytes);
+      cachedFileRepository.save(cf);
+      return;
+    }
     torrentClient.enableFile(torrent.getInfoHash(), cf.getFileIndex());
     cf.markDownloading();
     cachedFileRepository.save(cf);
@@ -203,14 +267,23 @@ public class FileDownloadService {
         List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
         torrentClient.disableAllFiles(infoHash, allIndices);
       }
-      torrentClient.enableFile(infoHash, cf.getFileIndex());
-      var fileProgress = torrentClient.getFileProgress(infoHash, cf.getFileIndex());
       long fileSizeBytes = cf.getTorrent().getFiles().stream()
           .filter(f -> f.index() == cf.getFileIndex())
           .mapToLong(TorrentFile::sizeBytes)
           .findFirst()
           .orElse(0L);
-      cf.updateProgress(fileProgress.progress(), fileSizeBytes);
+      float progress = cf.getProgress() != null ? cf.getProgress() : 0f;
+      long remainingBytes = (long) (fileSizeBytes * (1 - progress));
+      long freeSpace = torrentClient.getFreeSpaceBytes();
+      if (freeSpace - remainingBytes < minFreeSpaceBytes) {
+        log.warn("Not enough disk space to enable file for cachedFile=[{}]: freeSpace={} remainingBytes={} minFree={}",
+            cf.getId(), freeSpace, remainingBytes, minFreeSpaceBytes);
+        cachedFileRepository.save(cf);
+        return;
+      }
+      torrentClient.enableFile(infoHash, cf.getFileIndex());
+      var fileProgress = torrentClient.getFileProgress(infoHash, cf.getFileIndex());
+      cf.updateProgress(fileProgress.progress());
       if (fileProgress.progress() >= 1.0f) {
         String relativePath = torrentClient.getRelativeFilePath(infoHash, cf.getFileIndex());
         try {

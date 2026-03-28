@@ -18,6 +18,7 @@ public class Torrent extends AggregateRoot {
   private String infoHash;
 
   @Getter
+  @Column(columnDefinition = "text")
   private String downloadUrl; // null when submitted as an uploaded file
 
   @Getter
@@ -27,7 +28,7 @@ public class Torrent extends AggregateRoot {
   @Getter
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 30)
-  private TorrentStatus status = TorrentStatus.FETCHING_METADATA;
+  private TorrentStatus status = TorrentStatus.QUEUED;
 
   @Getter
   @JdbcTypeCode(SqlTypes.JSON)
@@ -50,6 +51,11 @@ public class Torrent extends AggregateRoot {
   public void markReady(List<TorrentFile> files) {
     this.files = new ArrayList<>(files);
     this.status = TorrentStatus.READY;
+    touch();
+  }
+
+  public void markFetchingMetadata() {
+    this.status = TorrentStatus.FETCHING_METADATA;
     touch();
   }
 
