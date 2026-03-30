@@ -24,7 +24,6 @@ public class Torrent extends AggregateRoot {
   @Getter
   private String torrentS3Key; // set once .torrent file is stored in S3
 
-
   @Getter
   @Enumerated(EnumType.STRING)
   @Column(nullable = false, length = 30)

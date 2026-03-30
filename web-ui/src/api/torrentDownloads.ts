@@ -38,3 +38,15 @@ export function claimFile(id: string, fileIndex: number, user: User, accountId: 
 export function getFileDownload(id: string, fileIndex: number, user: User, accountId: string): Promise<FileDownloadDTO> {
   return apiRequest<FileDownloadDTO>(`/torrent-download/${id}/file/${fileIndex}`, user, { accountId });
 }
+
+export function deleteTorrentDownload(id: string, user: User, accountId: string): Promise<void> {
+  return apiRequest<void>(`/torrent-download/${id}`, user, { method: 'DELETE', accountId });
+}
+
+export function cacheFile(id: string, fileIndex: number, user: User, accountId: string): Promise<FileDownloadDTO> {
+  return apiRequest<FileDownloadDTO>(`/torrent-download/${id}/file/${fileIndex}/cache`, user, { method: 'POST', accountId });
+}
+
+export function extendCacheLifetime(id: string, fileIndex: number, days: number, user: User, accountId: string): Promise<void> {
+  return apiRequest<void>(`/torrent-download/${id}/file/${fileIndex}/extend-cache?days=${days}`, user, { method: 'POST', accountId });
+}

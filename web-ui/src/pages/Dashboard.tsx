@@ -13,11 +13,18 @@ import {
   Chip,
   CircularProgress,
   Alert,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { listTorrentDownloads } from '../api/torrentDownloads';
+import { listTorrentDownloads, deleteTorrentDownload } from '../api/torrentDownloads';
 import type { TorrentDownloadDTO, TorrentStatus } from '../types/api.types';
 
 function StatusChip({ status }: { status: TorrentStatus }) {
@@ -33,6 +40,8 @@ export function Dashboard() {
   const [downloads, setDownloads] = useState<TorrentDownloadDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<TorrentDownloadDTO | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!user || !accountId) return;
@@ -41,6 +50,20 @@ export function Dashboard() {
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
   }, [user, accountId]);
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget || !user || !accountId) return;
+    setDeleting(true);
+    try {
+      await deleteTorrentDownload(deleteTarget.id, user, accountId);
+      setDownloads((prev) => prev.filter((d) => d.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to delete');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <Box>
@@ -73,6 +96,7 @@ export function Dashboard() {
                 <TableCell>Status</TableCell>
                 <TableCell>Files</TableCell>
                 <TableCell>Submitted</TableCell>
+                <TableCell />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -90,12 +114,37 @@ export function Dashboard() {
                   <TableCell><StatusChip status={d.status} /></TableCell>
                   <TableCell>{d.files.length > 0 ? d.files.length : '—'}</TableCell>
                   <TableCell>{new Date(d.createdAt).toLocaleString()}</TableCell>
+                  <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={() => setDeleteTarget(d)}
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
       )}
+
+      <Dialog open={!!deleteTarget} onClose={() => !deleting && setDeleteTarget(null)}>
+        <DialogTitle>Delete torrent download?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This will remove your download record. If no other users have claimed this torrent,
+            all cached files and S3 objects will be permanently deleted.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={handleDeleteConfirm} disabled={deleting}>
+            {deleting ? <CircularProgress size={20} /> : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

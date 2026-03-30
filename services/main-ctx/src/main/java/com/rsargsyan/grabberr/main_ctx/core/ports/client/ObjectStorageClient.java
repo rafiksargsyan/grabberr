@@ -5,6 +5,7 @@ import java.util.Optional;
 public interface ObjectStorageClient {
   void upload(String key, byte[] bytes, String contentType);
   byte[] download(String key);
+  void delete(String key);
   Optional<Long> getSize(String path);
   String generateSignedUrl(String path);
 }

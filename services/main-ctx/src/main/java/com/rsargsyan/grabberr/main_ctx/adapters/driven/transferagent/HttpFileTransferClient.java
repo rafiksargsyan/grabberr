@@ -6,7 +6,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 import java.util.Map;
 
@@ -36,4 +39,28 @@ public class HttpFileTransferClient implements FileTransferClient {
         .toBodilessEntity();
     log.info("startTransfer: {} -> {}", sourcePath, s3Key);
   }
+
+  @Override
+  public TransferStatusResult getTransferStatus(String sourcePath) {
+    try {
+      TransferStatusResponse response = restClient.get()
+          .uri(u -> u.path("/transfers/status").queryParam("path", sourcePath).build())
+          .retrieve()
+          .body(TransferStatusResponse.class);
+      if (response == null) return new TransferStatusResult(TransferStatus.UNKNOWN, null);
+      return new TransferStatusResult(TransferStatus.valueOf(response.status()), response.progress());
+    } catch (HttpClientErrorException e) {
+      if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
+        log.debug("getTransferStatus [{}]: unknown transfer (agent restarted?), will retry", sourcePath);
+      } else {
+        log.warn("getTransferStatus [{}]: unexpected error: {}", sourcePath, e.getMessage());
+      }
+      return new TransferStatusResult(TransferStatus.UNKNOWN, null);
+    } catch (RestClientException e) {
+      log.warn("getTransferStatus [{}]: agent unreachable: {}", sourcePath, e.getMessage());
+      return new TransferStatusResult(TransferStatus.UNKNOWN, null);
+    }
+  }
+
+  private record TransferStatusResponse(String status, Float progress) {}
 }

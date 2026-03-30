@@ -37,11 +37,33 @@ import java.util.List;
 @Service
 public class FileDownloadService {
 
+  private static final List<FileDownloadStatus> ACTIVE_STATUSES = List.of(
+      FileDownloadStatus.SUBMITTED, FileDownloadStatus.DOWNLOADING,
+      FileDownloadStatus.DOWNLOADED, FileDownloadStatus.TRANSFERRING);
+
   @Value("${grabberr.download-timeout:PT24H}")
   private Duration downloadTimeout;
 
+  @Value("${grabberr.transfer-min-speed-bps:1048576}")
+  private long transferMinSpeedBps;
+
+  @Value("${grabberr.transfer-backoff-initial-delay:PT1M}")
+  private Duration transferBackoffInitialDelay;
+
+  @Value("${grabberr.transfer-backoff-max-delay:PT30M}")
+  private Duration transferBackoffMaxDelay;
+
   @Value("${grabberr.min-free-space-bytes:10737418240}")
   private long minFreeSpaceBytes;
+
+  @Value("${grabberr.downloads-base-url}")
+  private String downloadsBaseUrl;
+
+  @Value("${grabberr.downloaded-file-ttl:PT1H}")
+  private Duration downloadedFileTtl;
+
+  @Value("${grabberr.cache-ttl:P15D}")
+  private Duration cacheTtl;
 
   private final TorrentDownloadRepository torrentDownloadRepository;
   private final CachedFileRepository cachedFileRepository;
@@ -101,6 +123,12 @@ public class FileDownloadService {
           return cf;
         });
 
+    if (cachedFile.getStatus() == FileDownloadStatus.DONE && !cachedFile.isStoredInS3()) {
+      cachedFile.resetForReclaim();
+      cachedFileRepository.save(cachedFile);
+      eventPublisher.publishEvent(new CachedFileSubmittedEvent(cachedFile.getId()));
+    }
+
     cachedFileClaimRepository.findByCachedFile_IdAndAccount_Id(cachedFile.getId(), account.getId())
         .orElseGet(() -> cachedFileClaimRepository.save(new CachedFileClaim(account, cachedFile)));
 
@@ -121,6 +149,25 @@ public class FileDownloadService {
         });
   }
 
+  @Transactional
+  public FileDownloadDTO cacheFile(String torrentDownloadIdStr, int fileIndex, String accountIdStr) {
+    TorrentDownload torrentDownload = findTorrentDownload(torrentDownloadIdStr, accountIdStr);
+    CachedFile cf = cachedFileRepository
+        .findByTorrentIdAndFileIndex(torrentDownload.getTorrent().getId(), fileIndex)
+        .orElseThrow(ResourceNotFoundException::new);
+    if (cf.getStatus() != FileDownloadStatus.DOWNLOADED) {
+      return toDTO(cf);
+    }
+    try {
+      fileTransferClient.startTransfer(cf.getPath(), cf.getPath());
+      cf.markTransferring(cf.getPath());
+      cachedFileRepository.save(cf);
+    } catch (Exception e) {
+      log.warn("startTransfer [{}]: failed, will retry", cf.getPath(), e);
+    }
+    return toDTO(cf);
+  }
+
   public List<FileDownloadDTO> list(String torrentDownloadIdStr, String accountIdStr) {
     TorrentDownload torrentDownload = findTorrentDownload(torrentDownloadIdStr, accountIdStr);
     return cachedFileRepository.findByTorrentId(torrentDownload.getTorrent().getId()).stream()
@@ -137,25 +184,79 @@ public class FileDownloadService {
   }
 
   @Transactional
+  public void deleteAllForTorrent(Long torrentId) {
+    cachedFileClaimRepository.deleteByCachedFile_TorrentId(torrentId);
+    cachedFileRepository.findByTorrentId(torrentId).forEach(cf -> {
+      if (cf.isStoredInS3()) {
+        try {
+          objectStorageClient.delete(cf.getPath());
+        } catch (Exception e) {
+          log.warn("Failed to delete S3 object [{}] for cachedFile=[{}]", cf.getPath(), cf.getId(), e);
+        }
+      }
+    });
+    cachedFileRepository.deleteAllByTorrentId(torrentId);
+  }
+
+  @Transactional
   public void cancelClaimsForAccount(Long torrentId, Long accountId) {
     cachedFileClaimRepository.deleteByAccount_IdAndCachedFile_TorrentId(accountId, torrentId);
     cachedFileRepository.findByTorrentId(torrentId).forEach(this::cancelIfNoClaims);
   }
 
   private void cancelIfNoClaims(CachedFile cf) {
-    if (cf.getStatus() == FileDownloadStatus.DONE) return;
+    if (cf.getStatus() == FileDownloadStatus.DONE || cf.getStatus() == FileDownloadStatus.TRANSFERRING) return;
     if (!cachedFileClaimRepository.existsByCachedFile_Id(cf.getId())) {
       log.info("CachedFile [{}] has no remaining claims, deleting", cf.getId());
       cachedFileRepository.delete(cf);
-      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(
-          cf.getTorrent().getId(), List.of(FileDownloadStatus.SUBMITTED, FileDownloadStatus.DOWNLOADING, FileDownloadStatus.TRANSFERRING));
+      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
         torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
       }
     }
   }
 
+  @Transactional
+  public void extendCacheLifetime(String torrentDownloadIdStr, int fileIndex, String accountIdStr, int days) {
+    TorrentDownload torrentDownload = findTorrentDownload(torrentDownloadIdStr, accountIdStr);
+    CachedFile cf = cachedFileRepository
+        .findByTorrentIdAndFileIndex(torrentDownload.getTorrent().getId(), fileIndex)
+        .orElseThrow(ResourceNotFoundException::new);
+    if (cf.getStatus() != FileDownloadStatus.DONE || !cf.isStoredInS3()) return;
+    Instant currentExpiry = cf.getS3ExpiresAt() != null ? cf.getS3ExpiresAt() : Instant.now();
+    cf.extendS3Expiry(currentExpiry.plus(Duration.ofDays(days)));
+    cachedFileRepository.save(cf);
+  }
+
+  public void pollExpiredCachedFiles() {
+    for (Long id : cachedFileRepository.findExpiredS3FileIds(Instant.now())) {
+      String strId = Util.tsidToString(id);
+      try {
+        self.expireCachedFile(strId);
+      } catch (Exception e) {
+        log.error("Failed to expire cached file [{}]", strId, e);
+      }
+    }
+  }
+
+  @Transactional
+  public void expireCachedFile(String cachedFileIdStr) {
+    Long cachedFileId = TSIDValidator.validate(cachedFileIdStr);
+    CachedFile cf = cachedFileRepository.findById(cachedFileId).orElse(null);
+    if (cf == null || cf.getStatus() != FileDownloadStatus.DONE || !cf.isStoredInS3()) return;
+    try {
+      objectStorageClient.delete(cf.getPath());
+    } catch (Exception e) {
+      log.warn("Failed to delete S3 object [{}] for cachedFile=[{}]", cf.getPath(), cachedFileId, e);
+      return;
+    }
+    cf.expireS3();
+    cachedFileRepository.save(cf);
+    log.info("Expired S3 object for cachedFile=[{}] path=[{}]", cachedFileId, cf.getPath());
+  }
+
   public void pollFileDownloads() {
+    pollExpiredCachedFiles();
     for (Long id : cachedFileRepository.findIdsByStatus(FileDownloadStatus.SUBMITTED)) {
       String strId = Util.tsidToString(id);
       try {
@@ -170,6 +271,14 @@ public class FileDownloadService {
         self.processCachedFileDownload(strId);
       } catch (Exception e) {
         log.error("Failed to process cached file download [{}]", strId, e);
+      }
+    }
+    for (Long id : cachedFileRepository.findIdsByStatus(FileDownloadStatus.DOWNLOADED)) {
+      String strId = Util.tsidToString(id);
+      try {
+        self.pollDownloadedFile(strId);
+      } catch (Exception e) {
+        log.error("Failed to poll downloaded file [{}]", strId, e);
       }
     }
     for (Long id : cachedFileRepository.findIdsByStatus(FileDownloadStatus.TRANSFERRING)) {
@@ -230,16 +339,51 @@ public class FileDownloadService {
     CachedFile cf = cachedFileRepository.findById(cachedFileId).orElse(null);
     if (cf == null || cf.getStatus() != FileDownloadStatus.TRANSFERRING) return;
     cf.recordPoll();
-    if (cf.getCreatedAt().plus(downloadTimeout).isBefore(Instant.now())) {
+
+    long fileSizeBytes = cf.getTorrent().getFiles().stream()
+        .filter(f -> f.index() == cf.getFileIndex())
+        .mapToLong(TorrentFile::sizeBytes)
+        .findFirst().orElse(0L);
+
+    Duration transferTimeout = fileSizeBytes > 0
+        ? Duration.ofSeconds(fileSizeBytes / transferMinSpeedBps)
+        : downloadTimeout;
+
+    Instant startedAt = cf.getTransferringStartedAt() != null ? cf.getTransferringStartedAt() : cf.getCreatedAt();
+    if (startedAt.plus(transferTimeout).isBefore(Instant.now())) {
+      log.warn("Transfer timeout for cachedFile=[{}] after {}s, marking FAILED", cf.getId(), transferTimeout.toSeconds());
       cf.markFailed();
-    } else {
-      objectStorageClient.getSize(cf.getPath())
-          .ifPresent(size -> cf.markDone(cf.getPath(), size));
+      cachedFileRepository.save(cf);
+      torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+      return;
     }
+
+    FileTransferClient.TransferStatusResult result = fileTransferClient.getTransferStatus(cf.getPath());
+    if (result.status() == FileTransferClient.TransferStatus.DONE) {
+      cf.markDone(cf.getPath(), fileSizeBytes, Instant.now().plus(cacheTtl));
+    } else if (result.status() == FileTransferClient.TransferStatus.RUNNING) {
+      if (result.progress() != null) {
+        cf.updateProgress(result.progress());
+      }
+    } else if (result.status() == FileTransferClient.TransferStatus.FAILED
+        || result.status() == FileTransferClient.TransferStatus.UNKNOWN) {
+      long backoffSeconds = Math.min(
+          transferBackoffInitialDelay.toSeconds() * (1L << cf.getTransferRetryCount()),
+          transferBackoffMaxDelay.toSeconds());
+      if (startedAt.plusSeconds(backoffSeconds).isBefore(Instant.now())) {
+        log.info("Retrying transfer for cachedFile=[{}] (attempt {})", cf.getId(), cf.getTransferRetryCount() + 1);
+        try {
+          fileTransferClient.startTransfer(cf.getPath(), cf.getPath());
+          cf.retryTransfer();
+        } catch (Exception e) {
+          log.warn("startTransfer retry [{}]: failed", cf.getPath(), e);
+        }
+      }
+    }
+
     cachedFileRepository.save(cf);
     if (cf.getStatus() != FileDownloadStatus.TRANSFERRING) {
-      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(
-          cf.getTorrent().getId(), List.of(FileDownloadStatus.SUBMITTED, FileDownloadStatus.DOWNLOADING, FileDownloadStatus.TRANSFERRING));
+      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
         torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
       }
@@ -286,21 +430,58 @@ public class FileDownloadService {
       cf.updateProgress(fileProgress.progress());
       if (fileProgress.progress() >= 1.0f) {
         String relativePath = torrentClient.getRelativeFilePath(infoHash, cf.getFileIndex());
-        try {
-          fileTransferClient.startTransfer(relativePath, relativePath);
-          cf.markTransferring(relativePath);
-        } catch (Exception e) {
-          log.warn("startTransfer [{}]: failed, will retry next poll", relativePath, e);
-        }
+        String fileUrl = downloadsBaseUrl + "/" + relativePath;
+        String metadata = runFfprobe(fileUrl);
+        cf.markDownloaded(relativePath, metadata);
+        log.info("CachedFile [{}] downloaded, metadata={}", cf.getId(), metadata != null ? "captured" : "unavailable");
       }
     }
     cachedFileRepository.save(cf);
     if (cf.getStatus() != FileDownloadStatus.DOWNLOADING) {
-      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(
-          cf.getTorrent().getId(), List.of(FileDownloadStatus.SUBMITTED, FileDownloadStatus.DOWNLOADING, FileDownloadStatus.TRANSFERRING));
+      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
         torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
       }
+    }
+  }
+
+  @Transactional
+  public void pollDownloadedFile(String cachedFileIdStr) {
+    Long cachedFileId = TSIDValidator.validate(cachedFileIdStr);
+    CachedFile cf = cachedFileRepository.findById(cachedFileId).orElse(null);
+    if (cf == null || cf.getStatus() != FileDownloadStatus.DOWNLOADED) return;
+    if (cf.getDownloadedAt() != null && cf.getDownloadedAt().plus(downloadedFileTtl).isBefore(Instant.now())) {
+      log.info("CachedFile [{}] DOWNLOADED TTL expired, marking done", cf.getId());
+      long sizeBytes = cf.getTorrent().getFiles().stream()
+          .filter(f -> f.index() == cf.getFileIndex())
+          .mapToLong(TorrentFile::sizeBytes)
+          .findFirst()
+          .orElse(0L);
+      cf.markDoneLocal(cf.getPath(), sizeBytes);
+      cachedFileRepository.save(cf);
+      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
+      if (!anyActive) {
+        torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+      }
+    }
+  }
+
+  private String runFfprobe(String absolutePath) {
+    try {
+      Process process = new ProcessBuilder(
+          "ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", absolutePath)
+          .redirectErrorStream(true)
+          .start();
+      String output = new String(process.getInputStream().readAllBytes());
+      int exitCode = process.waitFor();
+      if (exitCode != 0) {
+        log.warn("ffprobe exited with code {} for path [{}]: {}", exitCode, absolutePath, output);
+        return null;
+      }
+      return output;
+    } catch (Exception e) {
+      log.warn("ffprobe failed for path [{}]: {}", absolutePath, e.getMessage());
+      return null;
     }
   }
 
@@ -310,7 +491,7 @@ public class FileDownloadService {
   }
 
   private FileDownloadDTO toDTO(CachedFile cf) {
-    String signedUrl = cf.getStatus() == FileDownloadStatus.DONE
+    String signedUrl = cf.getStatus() == FileDownloadStatus.DONE && cf.isStoredInS3()
         ? objectStorageClient.generateSignedUrl(cf.getPath())
         : null;
     return FileDownloadDTO.from(cf, signedUrl);

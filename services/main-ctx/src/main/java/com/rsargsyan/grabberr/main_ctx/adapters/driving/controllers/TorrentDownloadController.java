@@ -87,6 +87,22 @@ public class TorrentDownloadController {
     return ResponseEntity.noContent().build();
   }
 
+  @PostMapping("/{id}/file/{fileIndex}/cache")
+  public ResponseEntity<FileDownloadDTO> cacheFile(@PathVariable String id,
+                                                   @PathVariable int fileIndex) {
+    String accountId = UserContextHolder.get().getAccountId();
+    return ResponseEntity.ok(fileDownloadService.cacheFile(id, fileIndex, accountId));
+  }
+
+  @PostMapping("/{id}/file/{fileIndex}/extend-cache")
+  public ResponseEntity<Void> extendCacheLifetime(@PathVariable String id,
+                                                  @PathVariable int fileIndex,
+                                                  @RequestParam int days) {
+    String accountId = UserContextHolder.get().getAccountId();
+    fileDownloadService.extendCacheLifetime(id, fileIndex, accountId, days);
+    return ResponseEntity.noContent().build();
+  }
+
   @DeleteMapping("/{id}")
   public ResponseEntity<Void> deleteTorrentDownload(@PathVariable String id) {
     String accountId = UserContextHolder.get().getAccountId();

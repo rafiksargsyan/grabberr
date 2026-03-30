@@ -27,12 +27,20 @@ public class CachedFile extends AggregateRoot {
   // populated when DONE
   @Getter private String path;
   @Getter private Long fileSizeBytes;
+  @Getter private boolean storedInS3;
 
   @Getter private Float progress;
+
+  // populated when DOWNLOADED
+  @Getter @Column(columnDefinition = "text") private String metadata;
+  @Getter private Instant downloadedAt;
 
   @Getter private Instant downloadingAt;
   @Getter private Instant completedAt;
   @Getter private Instant lastPolledAt;
+  @Getter private Instant transferringStartedAt;
+  @Getter @Column(nullable = false, columnDefinition = "integer default 0") private int transferRetryCount;
+  @Getter private Instant s3ExpiresAt;
 
   @SuppressWarnings("unused")
   CachedFile() {}
@@ -53,16 +61,64 @@ public class CachedFile extends AggregateRoot {
     touch();
   }
 
-  public void markTransferring(String path) {
-    this.status = FileDownloadStatus.TRANSFERRING;
+  public void markDownloaded(String path, String metadata) {
+    this.status = FileDownloadStatus.DOWNLOADED;
     this.path = path;
+    this.metadata = metadata;
+    this.downloadedAt = Instant.now();
     touch();
   }
 
-  public void markDone(String path, Long fileSizeBytes) {
+  public void markTransferring(String path) {
+    this.status = FileDownloadStatus.TRANSFERRING;
+    this.path = path;
+    this.transferringStartedAt = Instant.now();
+    this.transferRetryCount = 0;
+    this.progress = null;
+    touch();
+  }
+
+  public void retryTransfer() {
+    this.transferringStartedAt = Instant.now();
+    this.transferRetryCount++;
+    touch();
+  }
+
+  public void markDone(String path, Long fileSizeBytes, Instant s3ExpiresAt) {
     this.status = FileDownloadStatus.DONE;
     this.path = path;
     this.fileSizeBytes = fileSizeBytes;
+    this.storedInS3 = true;
+    this.completedAt = Instant.now();
+    this.s3ExpiresAt = s3ExpiresAt;
+    touch();
+  }
+
+  public void expireS3() {
+    this.storedInS3 = false;
+    this.s3ExpiresAt = null;
+    touch();
+  }
+
+  public void resetForReclaim() {
+    this.status = FileDownloadStatus.SUBMITTED;
+    this.storedInS3 = false;
+    this.completedAt = null;
+    this.s3ExpiresAt = null;
+    touch();
+  }
+
+  public void extendS3Expiry(Instant newExpiry) {
+    this.s3ExpiresAt = newExpiry;
+    touch();
+  }
+
+  public void markDoneLocal(String path, Long fileSizeBytes) {
+    this.status = FileDownloadStatus.DONE;
+    this.path = path;
+    this.fileSizeBytes = fileSizeBytes;
+    this.storedInS3 = false;
+    this.s3ExpiresAt = null;
     this.completedAt = Instant.now();
     touch();
   }

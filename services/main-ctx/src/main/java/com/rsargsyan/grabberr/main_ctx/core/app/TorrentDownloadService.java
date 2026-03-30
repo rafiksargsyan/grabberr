@@ -12,7 +12,9 @@ import com.rsargsyan.grabberr.main_ctx.core.exception.InvalidTorrentFileExceptio
 import com.rsargsyan.grabberr.main_ctx.core.exception.ResourceNotFoundException;
 import com.rsargsyan.grabberr.main_ctx.core.ports.client.ObjectStorageClient;
 import com.rsargsyan.grabberr.main_ctx.core.ports.client.TorrentClient;
+import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.FileDownloadStatus;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.AccountRepository;
+import com.rsargsyan.grabberr.main_ctx.core.ports.repository.CachedFileRepository;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.TorrentDownloadRepository;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.TorrentRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +42,7 @@ public class TorrentDownloadService {
 
   private final TorrentRepository torrentRepository;
   private final TorrentDownloadRepository torrentDownloadRepository;
+  private final CachedFileRepository cachedFileRepository;
   private final AccountRepository accountRepository;
   private final TorrentClient torrentClient;
   private final ObjectStorageClient objectStorageClient;
@@ -55,11 +58,13 @@ public class TorrentDownloadService {
   @Autowired
   public TorrentDownloadService(TorrentRepository torrentRepository,
                                 TorrentDownloadRepository torrentDownloadRepository,
+                                CachedFileRepository cachedFileRepository,
                                 AccountRepository accountRepository,
                                 TorrentClient torrentClient,
                                 ObjectStorageClient objectStorageClient) {
     this.torrentRepository = torrentRepository;
     this.torrentDownloadRepository = torrentDownloadRepository;
+    this.cachedFileRepository = cachedFileRepository;
     this.accountRepository = accountRepository;
     this.torrentClient = torrentClient;
     this.objectStorageClient = objectStorageClient;
@@ -110,7 +115,7 @@ public class TorrentDownloadService {
   }
 
   public TorrentDownloadDTO getStatusByInfoHash(String infoHash, String accountIdStr) {
-    return torrentDownloadRepository.findByTorrent_InfoHashAndAccount_Id(infoHash, TSIDValidator.validate(accountIdStr))
+    return torrentDownloadRepository.findByTorrent_InfoHashAndAccount_Id(infoHash.toLowerCase(), TSIDValidator.validate(accountIdStr))
         .map(TorrentDownloadDTO::from)
         .orElseThrow(ResourceNotFoundException::new);
   }
@@ -123,16 +128,15 @@ public class TorrentDownloadService {
 
     Torrent torrent = torrentDownload.getTorrent();
 
-    fileDownloadService.cancelClaimsForAccount(torrent.getId(), TSIDValidator.validate(accountIdStr));
-
     torrentDownloadRepository.delete(torrentDownload);
 
-    if (!torrentDownloadRepository.existsByTorrent_Id(torrent.getId())
-        && torrent.getStatus() == TorrentStatus.FETCHING_METADATA) {
-      log.info("No more claims on torrent [{}] in FETCHING_METADATA, removing", torrent.getInfoHash());
-      torrent.markFailed();
-      torrentRepository.save(torrent);
-      torrentClient.removeTorrent(torrent.getInfoHash(), false);
+    if (!torrentDownloadRepository.existsByTorrent_Id(torrent.getId())) {
+      log.info("Last TorrentDownload removed for torrent [{}], cleaning up", torrent.getInfoHash());
+      fileDownloadService.deleteAllForTorrent(torrent.getId());
+      torrentClient.removeTorrent(torrent.getInfoHash(), true);
+      torrentRepository.delete(torrent);
+    } else {
+      fileDownloadService.cancelClaimsForAccount(torrent.getId(), TSIDValidator.validate(accountIdStr));
     }
   }
 

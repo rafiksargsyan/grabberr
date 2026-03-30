@@ -13,8 +13,11 @@ public record FileDownloadDTO(
     String signedUrl,
     Long fileSizeBytes,
     Instant completedAt,
+    Instant s3ExpiresAt,
     Instant createdAt,
-    Instant downloadingAt
+    Instant downloadingAt,
+    Instant downloadedAt,
+    String metadata
 ) {
   public static FileDownloadDTO from(CachedFile cf, String signedUrl) {
     return new FileDownloadDTO(
@@ -25,8 +28,11 @@ public record FileDownloadDTO(
         signedUrl,
         cf.getFileSizeBytes(),
         cf.getCompletedAt(),
+        cf.getS3ExpiresAt(),
         cf.getCreatedAt(),
-        cf.getDownloadingAt()
+        cf.getDownloadingAt(),
+        cf.getDownloadedAt(),
+        cf.getMetadata()
     );
   }
 }

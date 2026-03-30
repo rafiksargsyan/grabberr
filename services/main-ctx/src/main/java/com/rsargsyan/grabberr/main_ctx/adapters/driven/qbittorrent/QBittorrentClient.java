@@ -30,8 +30,9 @@ public class QBittorrentClient implements TorrentClient {
       float progress
   ) {}
 
-  private record QbtMainData(QbtServerState server_state) {}
+  private record QbtMainData(QbtServerState server_state, java.util.Map<String, QbtTorrentData> torrents) {}
   private record QbtServerState(long free_space_on_disk) {}
+  private record QbtTorrentData(long amount_left) {}
   private record QbtTorrentInfo(String state) {}
 
 
@@ -241,7 +242,10 @@ public class QBittorrentClient implements TorrentClient {
             .retrieve()
             .body(QbtMainData.class)
     );
-    return data != null ? data.server_state().free_space_on_disk() : 0L;
+    if (data == null) return 0L;
+    long totalAmountLeft = data.torrents() == null ? 0L :
+        data.torrents().values().stream().mapToLong(QbtTorrentData::amount_left).sum();
+    return data.server_state().free_space_on_disk() - totalAmountLeft;
   }
 
   private void postForm(String uri, String body) {

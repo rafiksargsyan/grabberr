@@ -13,7 +13,7 @@ export interface ApiKeyDTO {
 }
 
 export type TorrentStatus = 'FETCHING_METADATA' | 'READY' | 'FAILED';
-export type FileDownloadStatus = 'DOWNLOADING' | 'DONE' | 'FAILED';
+export type FileDownloadStatus = 'SUBMITTED' | 'DOWNLOADING' | 'DOWNLOADED' | 'TRANSFERRING' | 'DONE' | 'FAILED';
 
 export interface TorrentFile {
   index: number;
@@ -33,8 +33,11 @@ export interface FileDownloadDTO {
   id: string;
   fileIndex: number;
   status: FileDownloadStatus;
+  progress: number | null;
   signedUrl: string | null;
   fileSizeBytes: number | null;
   completedAt: string | null;
+  s3ExpiresAt: string | null;
   createdAt: string;
+  metadata: string | null;
 }

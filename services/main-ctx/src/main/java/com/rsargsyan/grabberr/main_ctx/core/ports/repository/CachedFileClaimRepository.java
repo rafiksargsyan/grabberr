@@ -9,4 +9,5 @@ public interface CachedFileClaimRepository extends JpaRepository<CachedFileClaim
   Optional<CachedFileClaim> findByCachedFile_IdAndAccount_Id(Long cachedFileId, Long accountId);
   boolean existsByCachedFile_Id(Long cachedFileId);
   void deleteByAccount_IdAndCachedFile_TorrentId(Long accountId, Long torrentId);
+  void deleteByCachedFile_TorrentId(Long torrentId);
 }
