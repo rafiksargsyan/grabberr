@@ -62,5 +62,24 @@ public class HttpFileTransferClient implements FileTransferClient {
     }
   }
 
+  @Override
+  public void cancelTransfer(String sourcePath) {
+    try {
+      restClient.post()
+          .uri(u -> u.path("/transfers/cancel").queryParam("path", sourcePath).build())
+          .retrieve()
+          .toBodilessEntity();
+      log.info("cancelTransfer: {}", sourcePath);
+    } catch (HttpClientErrorException e) {
+      if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
+        log.debug("cancelTransfer [{}]: no active transfer (already done or agent restarted)", sourcePath);
+      } else {
+        log.warn("cancelTransfer [{}]: unexpected error: {}", sourcePath, e.getMessage());
+      }
+    } catch (RestClientException e) {
+      log.warn("cancelTransfer [{}]: agent unreachable: {}", sourcePath, e.getMessage());
+    }
+  }
+
   private record TransferStatusResponse(String status, Float progress) {}
 }

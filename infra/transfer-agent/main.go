@@ -25,18 +25,21 @@ type transferState struct {
 }
 
 const (
-	statusRunning = "RUNNING"
-	statusDone    = "DONE"
-	statusFailed  = "FAILED"
+	statusRunning   = "RUNNING"
+	statusDone      = "DONE"
+	statusFailed    = "FAILED"
+	statusCancelled = "CANCELLED"
 )
 
 var (
 	bucket            string
 	transfers         sync.Map // key: sourcePath, value: transferState
+	activeCmds        sync.Map // key: sourcePath, value: *exec.Cmd
 	uploadConcurrency string
 	chunkSize         string
 	bufferSize        string
 	statsInterval     string
+	bwlimit           string
 )
 
 func main() {
@@ -45,13 +48,15 @@ func main() {
 		log.Fatal("TRANSFER_AGENT_BUCKET env var required")
 	}
 
-	uploadConcurrency = getEnv("RCLONE_UPLOAD_CONCURRENCY", "8")
-	chunkSize = getEnv("RCLONE_CHUNK_SIZE", "64M")
-	bufferSize = getEnv("RCLONE_BUFFER_SIZE", "64M")
+	uploadConcurrency = getEnv("RCLONE_UPLOAD_CONCURRENCY", "4")
+	chunkSize = getEnv("RCLONE_CHUNK_SIZE", "32M")
+	bufferSize = getEnv("RCLONE_BUFFER_SIZE", "32M")
 	statsInterval = getEnv("RCLONE_STATS_INTERVAL", "30s")
+	bwlimit = getEnv("RCLONE_BWLIMIT", "500k")
 
 	http.HandleFunc("/transfer", handleTransfer)
 	http.HandleFunc("/transfers/status", handleTransferStatus)
+	http.HandleFunc("/transfers/cancel", handleTransferCancel)
 	log.Println("transfer-agent listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
@@ -82,11 +87,13 @@ func handleTransfer(w http.ResponseWriter, r *http.Request) {
 	transfers.Store(req.SourcePath, transferState{Status: statusRunning, Progress: 0})
 
 	go func() {
-		cmd := exec.Command("rclone", "copyto", src, dst,
+		cmd := exec.Command("ionice", "-c3",
+			"rclone", "copyto", src, dst,
 			"--no-traverse",
 			"--s3-upload-concurrency", uploadConcurrency,
 			"--s3-chunk-size", chunkSize,
 			"--buffer-size", bufferSize,
+			"--bwlimit", bwlimit,
 			"--use-json-log",
 			"--stats", statsInterval,
 			"--log-level", "INFO")
@@ -106,6 +113,8 @@ func handleTransfer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		activeCmds.Store(req.SourcePath, cmd)
+
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -115,9 +124,15 @@ func handleTransfer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		activeCmds.Delete(req.SourcePath)
+
 		if err := cmd.Wait(); err != nil {
-			log.Printf("rclone failed: %s -> %s: %v", src, dst, err)
-			transfers.Store(req.SourcePath, transferState{Status: statusFailed, Progress: 0})
+			if val, ok := transfers.Load(req.SourcePath); ok && val.(transferState).Status == statusCancelled {
+				log.Printf("rclone cancelled: %s", src)
+			} else {
+				log.Printf("rclone failed: %s -> %s: %v", src, dst, err)
+				transfers.Store(req.SourcePath, transferState{Status: statusFailed, Progress: 0})
+			}
 		} else {
 			log.Printf("rclone completed: %s -> %s", src, dst)
 			transfers.Store(req.SourcePath, transferState{Status: statusDone, Progress: 1})
@@ -125,6 +140,35 @@ func handleTransfer(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleTransferCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		http.Error(w, "path query param required", http.StatusBadRequest)
+		return
+	}
+
+	val, ok := activeCmds.Load(path)
+	if !ok {
+		http.Error(w, "no active transfer for path", http.StatusNotFound)
+		return
+	}
+
+	transfers.Store(path, transferState{Status: statusCancelled})
+	if err := val.(*exec.Cmd).Process.Kill(); err != nil {
+		log.Printf("failed to kill rclone for %s: %v", path, err)
+		http.Error(w, "failed to kill process", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("transfer cancelled: %s", path)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // parseProgress extracts a 0.0–1.0 progress value from a rclone JSON log line.

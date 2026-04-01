@@ -159,8 +159,9 @@ public class FileDownloadService {
       return toDTO(cf);
     }
     try {
-      fileTransferClient.startTransfer(cf.getPath(), cf.getPath());
-      cf.markTransferring(cf.getPath());
+      String s3Key = cf.getTorrent().getInfoHash() + "/" + cf.getPath();
+      fileTransferClient.startTransfer(cf.getPath(), s3Key);
+      cf.markTransferring(cf.getPath(), s3Key);
       cachedFileRepository.save(cf);
     } catch (Exception e) {
       log.warn("startTransfer [{}]: failed, will retry", cf.getPath(), e);
@@ -177,8 +178,10 @@ public class FileDownloadService {
 
   public FileDownloadDTO getStatus(String torrentDownloadIdStr, int fileIndex, String accountIdStr) {
     TorrentDownload torrentDownload = findTorrentDownload(torrentDownloadIdStr, accountIdStr);
+    Long accountId = TSIDValidator.validate(accountIdStr);
     return cachedFileRepository
         .findByTorrentIdAndFileIndex(torrentDownload.getTorrent().getId(), fileIndex)
+        .filter(cf -> cachedFileClaimRepository.findByCachedFile_IdAndAccount_Id(cf.getId(), accountId).isPresent())
         .map(this::toDTO)
         .orElseThrow(ResourceNotFoundException::new);
   }
@@ -189,9 +192,9 @@ public class FileDownloadService {
     cachedFileRepository.findByTorrentId(torrentId).forEach(cf -> {
       if (cf.isStoredInS3()) {
         try {
-          objectStorageClient.delete(cf.getPath());
+          objectStorageClient.delete(s3Key(cf));
         } catch (Exception e) {
-          log.warn("Failed to delete S3 object [{}] for cachedFile=[{}]", cf.getPath(), cf.getId(), e);
+          log.warn("Failed to delete S3 object [{}] for cachedFile=[{}]", s3Key(cf), cf.getId(), e);
         }
       }
     });
@@ -205,9 +208,14 @@ public class FileDownloadService {
   }
 
   private void cancelIfNoClaims(CachedFile cf) {
-    if (cf.getStatus() == FileDownloadStatus.DONE || cf.getStatus() == FileDownloadStatus.TRANSFERRING) return;
+    if (cf.getStatus() == FileDownloadStatus.DONE) return;
     if (!cachedFileClaimRepository.existsByCachedFile_Id(cf.getId())) {
-      log.info("CachedFile [{}] has no remaining claims, deleting", cf.getId());
+      if (cf.getStatus() == FileDownloadStatus.TRANSFERRING) {
+        log.info("CachedFile [{}] has no remaining claims, cancelling transfer", cf.getId());
+        fileTransferClient.cancelTransfer(cf.getPath());
+      } else {
+        log.info("CachedFile [{}] has no remaining claims, deleting", cf.getId());
+      }
       cachedFileRepository.delete(cf);
       boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
@@ -245,14 +253,14 @@ public class FileDownloadService {
     CachedFile cf = cachedFileRepository.findById(cachedFileId).orElse(null);
     if (cf == null || cf.getStatus() != FileDownloadStatus.DONE || !cf.isStoredInS3()) return;
     try {
-      objectStorageClient.delete(cf.getPath());
+      objectStorageClient.delete(s3Key(cf));
     } catch (Exception e) {
-      log.warn("Failed to delete S3 object [{}] for cachedFile=[{}]", cf.getPath(), cachedFileId, e);
+      log.warn("Failed to delete S3 object [{}] for cachedFile=[{}]", s3Key(cf), cachedFileId, e);
       return;
     }
     cf.expireS3();
     cachedFileRepository.save(cf);
-    log.info("Expired S3 object for cachedFile=[{}] path=[{}]", cachedFileId, cf.getPath());
+    log.info("Expired S3 object for cachedFile=[{}] s3Key=[{}]", cachedFileId, s3Key(cf));
   }
 
   public void pollFileDownloads() {
@@ -373,7 +381,7 @@ public class FileDownloadService {
       if (startedAt.plusSeconds(backoffSeconds).isBefore(Instant.now())) {
         log.info("Retrying transfer for cachedFile=[{}] (attempt {})", cf.getId(), cf.getTransferRetryCount() + 1);
         try {
-          fileTransferClient.startTransfer(cf.getPath(), cf.getPath());
+          fileTransferClient.startTransfer(cf.getPath(), cf.getS3Key());
           cf.retryTransfer();
         } catch (Exception e) {
           log.warn("startTransfer retry [{}]: failed", cf.getPath(), e);
@@ -492,8 +500,12 @@ public class FileDownloadService {
 
   private FileDownloadDTO toDTO(CachedFile cf) {
     String signedUrl = cf.getStatus() == FileDownloadStatus.DONE && cf.isStoredInS3()
-        ? objectStorageClient.generateSignedUrl(cf.getPath())
+        ? objectStorageClient.generateSignedUrl(s3Key(cf))
         : null;
     return FileDownloadDTO.from(cf, signedUrl);
+  }
+
+  private String s3Key(CachedFile cf) {
+    return cf.getS3Key() != null ? cf.getS3Key() : cf.getPath();
   }
 }

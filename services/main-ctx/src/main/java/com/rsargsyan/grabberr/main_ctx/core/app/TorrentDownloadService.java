@@ -6,13 +6,13 @@ import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.Account;
 import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.Torrent;
 import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.TorrentDownload;
 import com.rsargsyan.grabberr.main_ctx.core.domain.service.TSIDValidator;
+import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.TorrentFile;
 import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.TorrentStatus;
 import com.rsargsyan.grabberr.main_ctx.core.exception.InvalidDownloadUrlException;
 import com.rsargsyan.grabberr.main_ctx.core.exception.InvalidTorrentFileException;
 import com.rsargsyan.grabberr.main_ctx.core.exception.ResourceNotFoundException;
 import com.rsargsyan.grabberr.main_ctx.core.ports.client.ObjectStorageClient;
 import com.rsargsyan.grabberr.main_ctx.core.ports.client.TorrentClient;
-import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.FileDownloadStatus;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.AccountRepository;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.CachedFileRepository;
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.TorrentDownloadRepository;
@@ -86,19 +86,32 @@ public class TorrentDownloadService {
   @Transactional
   public TorrentDownloadDTO submitByFile(byte[] torrentFileBytes, String accountIdStr) {
     String infoHash;
+    List<TorrentFile> files;
     try {
       infoHash = Util.parseInfoHash(torrentFileBytes);
-    } catch (IllegalArgumentException e) {
+      files = Util.parseTorrentFiles(torrentFileBytes);
+    } catch (RuntimeException e) {
+      log.warn("Failed to parse torrent file: {}", e.getMessage());
       throw new InvalidTorrentFileException();
     }
     Torrent torrent = findOrCreateTorrent(infoHash, null,
         () -> torrentClient.addTorrent(infoHash, torrentFileBytes));
+    if (torrent.getStatus() == TorrentStatus.QUEUED || torrent.getStatus() == TorrentStatus.FAILED) {
+      // Metadata is in the file — no need to poll qBittorrent for it
+      try {
+        torrentClient.disableAllFiles(infoHash, files.stream().map(f -> f.index()).toList());
+      } catch (Exception e) {
+        log.warn("disableAllFiles [{}]: failed, continuing", infoHash, e);
+      }
+      torrent.markReady(files);
+      log.info("Torrent [{}] marked READY from file upload ({} file(s))", infoHash, files.size());
+    }
     if (torrent.getTorrentS3Key() == null) {
       String s3Key = torrentS3Key(infoHash);
       objectStorageClient.upload(s3Key, torrentFileBytes, "application/x-bittorrent");
       torrent.setTorrentS3Key(s3Key);
-      torrentRepository.save(torrent);
     }
+    torrentRepository.save(torrent);
     return createTorrentDownload(torrent, accountIdStr);
   }
 
@@ -234,7 +247,8 @@ public class TorrentDownloadService {
   private Torrent findOrCreateTorrent(String infoHash, String downloadUrl, Runnable addToClient) {
     return torrentRepository.findByInfoHash(infoHash)
         .map(existing -> {
-          if (existing.getStatus() == TorrentStatus.FETCHING_METADATA) {
+          if (existing.getStatus() == TorrentStatus.FETCHING_METADATA
+              || existing.getStatus() == TorrentStatus.FAILED) {
             addToClient.run();
           }
           return existing;

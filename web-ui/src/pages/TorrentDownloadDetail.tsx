@@ -27,7 +27,7 @@ import {
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useAuth } from '../hooks/useAuth';
-import { getTorrentDownload, listFileDownloads, claimFile, getFileDownload, deleteTorrentDownload, cacheFile, extendCacheLifetime } from '../api/torrentDownloads';
+import { getTorrentDownload, listFileDownloads, claimFile, getFileDownload, deleteTorrentDownload, cacheFile, extendCacheLifetime, unclaimFile } from '../api/torrentDownloads';
 import type { TorrentDownloadDTO, FileDownloadDTO, TorrentStatus, FileDownloadStatus } from '../types/api.types';
 
 function TorrentStatusChip({ status }: { status: TorrentStatus }) {
@@ -55,6 +55,7 @@ export function TorrentDownloadDetail() {
   const [torrent, setTorrent] = useState<TorrentDownloadDTO | null>(null);
   const [fileDownloads, setFileDownloads] = useState<Record<number, FileDownloadDTO>>({});
   const [claiming, setClaiming] = useState<Record<number, boolean>>({});
+  const [unclaiming, setUnclaiming] = useState<Record<number, boolean>>({});
   const [caching, setCaching] = useState<Record<number, boolean>>({});
   const [error, setError] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -148,6 +149,24 @@ export function TorrentDownloadDetail() {
       setError(e instanceof Error ? e.message : 'Failed to delete');
       setDeleting(false);
       setDeleteOpen(false);
+    }
+  };
+
+  const handleUnclaim = async (fileIndex: number) => {
+    if (!id || !user || !accountId) return;
+    setUnclaiming((prev) => ({ ...prev, [fileIndex]: true }));
+    setError('');
+    try {
+      await unclaimFile(id, fileIndex, user, accountId);
+      setFileDownloads((prev) => {
+        const next = { ...prev };
+        delete next[fileIndex];
+        return next;
+      });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to unclaim file');
+    } finally {
+      setUnclaiming((prev) => ({ ...prev, [fileIndex]: false }));
     }
   };
 
@@ -260,6 +279,18 @@ export function TorrentDownloadDetail() {
                         )}
                       </TableCell>
                       <TableCell>
+                        {fd && fd.status !== 'DONE' && (
+                          <Button
+                            size="small"
+                            variant="text"
+                            color="error"
+                            onClick={() => handleUnclaim(f.index)}
+                            disabled={unclaiming[f.index]}
+                            sx={{ mr: 1 }}
+                          >
+                            {unclaiming[f.index] ? <CircularProgress size={14} /> : 'Unclaim'}
+                          </Button>
+                        )}
                         {fd?.status === 'DONE' && fd.signedUrl ? (
                           <Button
                             size="small"

@@ -9,4 +9,6 @@ public interface FileTransferClient {
   void startTransfer(String sourcePath, String s3Key);
 
   TransferStatusResult getTransferStatus(String sourcePath);
+
+  void cancelTransfer(String sourcePath);
 }

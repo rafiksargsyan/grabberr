@@ -26,6 +26,7 @@ public class CachedFile extends AggregateRoot {
 
   // populated when DONE
   @Getter private String path;
+  @Getter @Column(name = "s3_key") private String s3Key;
   @Getter private Long fileSizeBytes;
   @Getter private boolean storedInS3;
 
@@ -69,9 +70,10 @@ public class CachedFile extends AggregateRoot {
     touch();
   }
 
-  public void markTransferring(String path) {
+  public void markTransferring(String path, String s3Key) {
     this.status = FileDownloadStatus.TRANSFERRING;
     this.path = path;
+    this.s3Key = s3Key;
     this.transferringStartedAt = Instant.now();
     this.transferRetryCount = 0;
     this.progress = null;
