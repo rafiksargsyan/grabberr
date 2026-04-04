@@ -9,6 +9,8 @@ import com.rsargsyan.grabberr.main_ctx.core.ports.repository.PrincipalRepository
 import com.rsargsyan.grabberr.main_ctx.core.ports.repository.UserProfileRepository;
 import io.hypersistence.tsid.TSID;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -43,8 +45,7 @@ public class AuthService {
     ApiKey apiKey = apiKeyRepository.findById(TSID.from(apiKeyId).toLong()).orElse(null);
     if (apiKey == null) return null;
     UserProfile userProfile = apiKey.getUserProfile();
-    apiKey.accessed();
-    apiKeyRepository.save(apiKey);
+    apiKeyRepository.updateLastAccessTime(apiKey.getId(), Instant.now());
     return UserContext.builder()
         .userProfileId(userProfile.getStrId())
         .accountId(userProfile.getAccount().getStrId())

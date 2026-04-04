@@ -17,6 +17,7 @@ public record FileDownloadDTO(
     Instant createdAt,
     Instant downloadingAt,
     Instant downloadedAt,
+    Instant transferringStartedAt,
     String metadata
 ) {
   public static FileDownloadDTO from(CachedFile cf, String signedUrl) {
@@ -32,6 +33,7 @@ public record FileDownloadDTO(
         cf.getCreatedAt(),
         cf.getDownloadingAt(),
         cf.getDownloadedAt(),
+        cf.getTransferringStartedAt(),
         cf.getMetadata()
     );
   }

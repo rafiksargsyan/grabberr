@@ -322,8 +322,21 @@ public class FileDownloadService {
       } else if (torrent.getDownloadUrl() != null) {
         torrentClient.addTorrent(torrent.getInfoHash(), torrent.getDownloadUrl());
       }
-      List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
-      torrentClient.disableAllFiles(torrent.getInfoHash(), allIndices);
+      try {
+        List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
+        torrentClient.disableAllFiles(torrent.getInfoHash(), allIndices);
+      } catch (org.springframework.web.client.HttpClientErrorException.Conflict e) {
+        log.warn("Torrent [{}] metadata not yet ready after re-add, will retry next cycle", torrent.getInfoHash());
+        cachedFileRepository.save(cf);
+        return;
+      }
+    } else {
+      java.util.Optional<String> state = torrentClient.getTorrentState(torrent.getInfoHash());
+      if (state.map(s -> s.startsWith("stopped") || s.startsWith("paused")).orElse(false)) {
+        log.info("Torrent [{}] is in stopped state — disabling all files before enabling target", torrent.getInfoHash());
+        List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
+        torrentClient.disableAllFiles(torrent.getInfoHash(), allIndices);
+      }
     }
     long fileSize = torrent.getFiles().stream()
         .filter(f -> f.index() == cf.getFileIndex())
@@ -408,16 +421,29 @@ public class FileDownloadService {
       cf.markFailed();
     } else {
       String infoHash = cf.getTorrent().getInfoHash();
+      Torrent torrent = cf.getTorrent();
       if (torrentClient.getFiles(infoHash).isEmpty()) {
         log.warn("Torrent [{}] missing from qBittorrent during download — re-adding", infoHash);
-        Torrent torrent = cf.getTorrent();
         if (torrent.getTorrentS3Key() != null) {
           torrentClient.addTorrent(infoHash, objectStorageClient.download(torrent.getTorrentS3Key()));
         } else if (torrent.getDownloadUrl() != null) {
           torrentClient.addTorrent(infoHash, torrent.getDownloadUrl());
         }
-        List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
-        torrentClient.disableAllFiles(infoHash, allIndices);
+        try {
+          List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
+          torrentClient.disableAllFiles(infoHash, allIndices);
+        } catch (org.springframework.web.client.HttpClientErrorException.Conflict e) {
+          log.warn("Torrent [{}] metadata not yet ready after re-add, will retry next cycle", infoHash);
+          cachedFileRepository.save(cf);
+          return;
+        }
+      } else {
+        java.util.Optional<String> state = torrentClient.getTorrentState(infoHash);
+        if (state.map(s -> s.startsWith("stopped") || s.startsWith("paused")).orElse(false)) {
+          log.info("Torrent [{}] is in stopped state — disabling all files before enabling target", infoHash);
+          List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
+          torrentClient.disableAllFiles(infoHash, allIndices);
+        }
       }
       long fileSizeBytes = cf.getTorrent().getFiles().stream()
           .filter(f -> f.index() == cf.getFileIndex())
