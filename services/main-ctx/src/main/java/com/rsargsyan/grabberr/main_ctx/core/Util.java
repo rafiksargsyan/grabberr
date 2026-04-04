@@ -43,9 +43,9 @@ public class Util {
   }
 
   private static String parseMagnetInfoHash(String magnet) {
-    URI uri = URI.create(magnet);
-    String query = uri.getRawSchemeSpecificPart();
-    for (String param : query.substring(1).split("&")) {
+    int queryStart = magnet.indexOf('?');
+    if (queryStart < 0) throw new IllegalArgumentException("No query string in magnet link");
+    for (String param : magnet.substring(queryStart + 1).split("&")) {
       if (param.startsWith("xt=urn:btih:")) {
         String hash = param.substring("xt=urn:btih:".length());
         if (hash.length() == 40) return hash.toLowerCase();
