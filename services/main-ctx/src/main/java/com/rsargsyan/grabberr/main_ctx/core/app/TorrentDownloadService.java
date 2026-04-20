@@ -147,6 +147,13 @@ public class TorrentDownloadService {
       log.info("Last TorrentDownload removed for torrent [{}], cleaning up", torrent.getInfoHash());
       fileDownloadService.deleteAllForTorrent(torrent.getId());
       torrentClient.removeTorrent(torrent.getInfoHash(), true);
+      if (torrent.getTorrentS3Key() != null) {
+        try {
+          objectStorageClient.delete(torrent.getTorrentS3Key());
+        } catch (Exception e) {
+          log.warn("Failed to delete .torrent file from S3 [{}]", torrent.getTorrentS3Key(), e);
+        }
+      }
       torrentRepository.delete(torrent);
     } else {
       fileDownloadService.cancelClaimsForAccount(torrent.getId(), TSIDValidator.validate(accountIdStr));

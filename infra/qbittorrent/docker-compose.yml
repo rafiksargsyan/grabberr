@@ -1,6 +1,24 @@
 services:
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.1
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-protonvpn}
+      - VPN_TYPE=${VPN_TYPE:-wireguard}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - OPENVPN_USER=${OPENVPN_USER}
+      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD}
+      - SERVER_COUNTRIES=${VPN_SERVER_COUNTRIES:-Netherlands}
+    ports:
+      - "${QBITTORRENT_PORT:-5080}:5080"
+    restart: unless-stopped
+
   qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:latest
+    image: lscr.io/linuxserver/qbittorrent:5.1.4
+    network_mode: "service:gluetun"
     environment:
       - PUID=1000
       - PGID=1000
@@ -9,8 +27,8 @@ services:
     volumes:
       - downloads:/downloads
       - qbt-config:/config
-    ports:
-      - "${QBITTORRENT_PORT:-5080}:5080"
+    depends_on:
+      - gluetun
     restart: unless-stopped
 
   nginx:

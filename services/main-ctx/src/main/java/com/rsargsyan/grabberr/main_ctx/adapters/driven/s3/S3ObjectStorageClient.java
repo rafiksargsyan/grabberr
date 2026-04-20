@@ -9,6 +9,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -53,16 +54,20 @@ public class S3ObjectStorageClient implements ObjectStorageClient {
         AwsBasicCredentials.create(accessKeyId, secretAccessKey));
     URI endpointUri = URI.create(endpoint.contains("://") ? endpoint : "https://" + endpoint);
 
+    var s3Config = S3Configuration.builder().pathStyleAccessEnabled(true).build();
+
     s3Client = S3Client.builder()
         .credentialsProvider(credentials)
         .region(Region.of(region))
         .endpointOverride(endpointUri)
+        .serviceConfiguration(s3Config)
         .build();
 
     s3Presigner = S3Presigner.builder()
         .credentialsProvider(credentials)
         .region(Region.of(region))
         .endpointOverride(endpointUri)
+        .serviceConfiguration(s3Config)
         .build();
   }
 

@@ -123,7 +123,8 @@ public class FileDownloadService {
           return cf;
         });
 
-    if (cachedFile.getStatus() == FileDownloadStatus.DONE && !cachedFile.isStoredInS3()) {
+    if ((cachedFile.getStatus() == FileDownloadStatus.DONE && !cachedFile.isStoredInS3())
+        || cachedFile.getStatus() == FileDownloadStatus.FAILED) {
       cachedFile.resetForReclaim();
       cachedFileRepository.save(cachedFile);
       eventPublisher.publishEvent(new CachedFileSubmittedEvent(cachedFile.getId()));
@@ -269,6 +270,8 @@ public class FileDownloadService {
       String strId = Util.tsidToString(id);
       try {
         self.processFileDownload(strId);
+      } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+        log.debug("Optimistic lock conflict on cached file [{}], will retry next cycle", strId);
       } catch (Exception e) {
         log.error("Failed to process submitted cached file [{}]", strId, e);
       }
@@ -375,7 +378,10 @@ public class FileDownloadService {
       log.warn("Transfer timeout for cachedFile=[{}] after {}s, marking FAILED", cf.getId(), transferTimeout.toSeconds());
       cf.markFailed();
       cachedFileRepository.save(cf);
-      torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+      boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
+      if (!anyActive) {
+        torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+      }
       return;
     }
 
@@ -425,7 +431,14 @@ public class FileDownloadService {
       if (torrentClient.getFiles(infoHash).isEmpty()) {
         log.warn("Torrent [{}] missing from qBittorrent during download — re-adding", infoHash);
         if (torrent.getTorrentS3Key() != null) {
-          torrentClient.addTorrent(infoHash, objectStorageClient.download(torrent.getTorrentS3Key()));
+          try {
+            torrentClient.addTorrent(infoHash, objectStorageClient.download(torrent.getTorrentS3Key()));
+          } catch (software.amazon.awssdk.services.s3.model.NoSuchKeyException e) {
+            log.warn("Torrent [{}] .torrent file missing from S3, falling back to downloadUrl", infoHash);
+            if (torrent.getDownloadUrl() != null) {
+              torrentClient.addTorrent(infoHash, torrent.getDownloadUrl());
+            }
+          }
         } else if (torrent.getDownloadUrl() != null) {
           torrentClient.addTorrent(infoHash, torrent.getDownloadUrl());
         }
