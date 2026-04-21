@@ -60,7 +60,8 @@ services:
     ports:
       - "${TRANSFER_AGENT_PORT:-8081}:8080"
     restart: unless-stopped
-
+    extra_hosts:                                                                                                                                                                             
+      - "minio.local:host-gateway"
 volumes:
   downloads:
   qbt-config:
