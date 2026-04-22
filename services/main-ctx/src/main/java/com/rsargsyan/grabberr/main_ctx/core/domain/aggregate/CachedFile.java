@@ -42,6 +42,7 @@ public class CachedFile extends AggregateRoot {
   @Getter private Instant transferringStartedAt;
   @Getter @Column(nullable = false, columnDefinition = "integer default 0") private int transferRetryCount;
   @Getter private Instant s3ExpiresAt;
+  @Getter private Instant submittedAt;
 
   @SuppressWarnings("unused")
   CachedFile() {}
@@ -49,6 +50,7 @@ public class CachedFile extends AggregateRoot {
   public CachedFile(Torrent torrent, int fileIndex) {
     this.torrent = torrent;
     this.fileIndex = fileIndex;
+    this.submittedAt = Instant.now();
   }
 
   public void updateProgress(float newProgress) {
@@ -59,6 +61,7 @@ public class CachedFile extends AggregateRoot {
   public void markDownloading() {
     this.status = FileDownloadStatus.DOWNLOADING;
     this.downloadingAt = Instant.now();
+    this.progress = 0f;
     touch();
   }
 
@@ -107,6 +110,7 @@ public class CachedFile extends AggregateRoot {
     this.storedInS3 = false;
     this.completedAt = null;
     this.s3ExpiresAt = null;
+    this.submittedAt = Instant.now();
     touch();
   }
 

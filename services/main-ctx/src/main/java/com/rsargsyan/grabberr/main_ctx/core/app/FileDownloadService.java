@@ -308,7 +308,8 @@ public class FileDownloadService {
     CachedFile cf = cachedFileRepository.findById(cachedFileId).orElse(null);
     if (cf == null || cf.getStatus() != FileDownloadStatus.SUBMITTED) return;
     cf.recordPoll();
-    if (cf.getCreatedAt().plus(downloadTimeout).isBefore(Instant.now())) {
+    Instant submittedAt = cf.getSubmittedAt() != null ? cf.getSubmittedAt() : cf.getCreatedAt();
+    if (submittedAt.plus(downloadTimeout).isBefore(Instant.now())) {
       cf.markFailed();
       cachedFileRepository.save(cf);
       return;
@@ -423,7 +424,8 @@ public class FileDownloadService {
     CachedFile cf = cachedFileRepository.findById(cachedFileId).orElse(null);
     if (cf == null || cf.getStatus() != FileDownloadStatus.DOWNLOADING) return;
     cf.recordPoll();
-    if (cf.getCreatedAt().plus(downloadTimeout).isBefore(Instant.now())) {
+    Instant downloadingStartedAt = cf.getDownloadingAt() != null ? cf.getDownloadingAt() : cf.getSubmittedAt() != null ? cf.getSubmittedAt() : cf.getCreatedAt();
+    if (downloadingStartedAt.plus(downloadTimeout).isBefore(Instant.now())) {
       cf.markFailed();
     } else {
       String infoHash = cf.getTorrent().getInfoHash();
