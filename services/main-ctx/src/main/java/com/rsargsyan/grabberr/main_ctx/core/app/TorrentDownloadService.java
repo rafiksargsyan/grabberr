@@ -141,9 +141,11 @@ public class TorrentDownloadService {
 
     Torrent torrent = torrentDownload.getTorrent();
 
+    boolean isLast = !torrentDownloadRepository.existsByTorrent_IdAndIdNot(torrent.getId(), torrentDownload.getId());
     torrentDownloadRepository.delete(torrentDownload);
+    torrentDownloadRepository.flush();
 
-    if (!torrentDownloadRepository.existsByTorrent_Id(torrent.getId())) {
+    if (isLast) {
       log.info("Last TorrentDownload removed for torrent [{}], cleaning up", torrent.getInfoHash());
       fileDownloadService.deleteAllForTorrent(torrent.getId());
       torrentClient.removeTorrent(torrent.getInfoHash(), true);
@@ -154,7 +156,7 @@ public class TorrentDownloadService {
           log.warn("Failed to delete .torrent file from S3 [{}]", torrent.getTorrentS3Key(), e);
         }
       }
-      torrentRepository.delete(torrent);
+      torrentRepository.deleteByIdDirect(torrent.getId());
     } else {
       fileDownloadService.cancelClaimsForAccount(torrent.getId(), TSIDValidator.validate(accountIdStr));
     }

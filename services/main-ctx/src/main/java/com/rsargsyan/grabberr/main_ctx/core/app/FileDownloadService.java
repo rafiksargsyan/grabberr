@@ -322,7 +322,15 @@ public class FileDownloadService {
     if (torrentClient.getFiles(torrent.getInfoHash()).isEmpty()) {
       log.warn("Torrent [{}] missing from qBittorrent — re-adding", torrent.getInfoHash());
       if (torrent.getTorrentS3Key() != null) {
-        torrentClient.addTorrent(torrent.getInfoHash(), objectStorageClient.download(torrent.getTorrentS3Key()));
+        try {
+          torrentClient.addTorrent(torrent.getInfoHash(), objectStorageClient.download(torrent.getTorrentS3Key()));
+        } catch (software.amazon.awssdk.services.s3.model.NoSuchKeyException e) {
+          log.warn("Torrent [{}] .torrent file missing from S3, clearing s3Key and falling back to downloadUrl", torrent.getInfoHash());
+          torrent.setTorrentS3Key(null);
+          if (torrent.getDownloadUrl() != null) {
+            torrentClient.addTorrent(torrent.getInfoHash(), torrent.getDownloadUrl());
+          }
+        }
       } else if (torrent.getDownloadUrl() != null) {
         torrentClient.addTorrent(torrent.getInfoHash(), torrent.getDownloadUrl());
       }
@@ -436,7 +444,8 @@ public class FileDownloadService {
           try {
             torrentClient.addTorrent(infoHash, objectStorageClient.download(torrent.getTorrentS3Key()));
           } catch (software.amazon.awssdk.services.s3.model.NoSuchKeyException e) {
-            log.warn("Torrent [{}] .torrent file missing from S3, falling back to downloadUrl", infoHash);
+            log.warn("Torrent [{}] .torrent file missing from S3, clearing s3Key and falling back to downloadUrl", infoHash);
+            torrent.setTorrentS3Key(null);
             if (torrent.getDownloadUrl() != null) {
               torrentClient.addTorrent(infoHash, torrent.getDownloadUrl());
             }

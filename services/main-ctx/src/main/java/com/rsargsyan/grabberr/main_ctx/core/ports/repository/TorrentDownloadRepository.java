@@ -11,4 +11,5 @@ public interface TorrentDownloadRepository extends JpaRepository<TorrentDownload
   Optional<TorrentDownload> findByTorrent_InfoHashAndAccount_Id(String infoHash, Long accountId);
   List<TorrentDownload> findByAccount_IdOrderByCreatedAtDesc(Long accountId);
   boolean existsByTorrent_Id(Long torrentId);
+  boolean existsByTorrent_IdAndIdNot(Long torrentId, Long excludeId);
 }
