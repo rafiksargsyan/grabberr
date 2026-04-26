@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,7 +149,7 @@ func handleTransferCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := r.URL.Query().Get("path")
+	path := getRawQueryParam(r, "path")
 	if path == "" {
 		http.Error(w, "path query param required", http.StatusBadRequest)
 		return
@@ -195,6 +196,28 @@ func parseProgress(line string) (float64, bool) {
 	return float64(pct) / 100.0, true
 }
 
+// getRawQueryParam reads a query parameter without converting '+' to space.
+// Go's url.Values.Get() treats '+' as space (form encoding), which breaks
+// file paths containing '+'. This function uses QueryEscape-compatible decoding.
+func getRawQueryParam(r *http.Request, key string) string {
+	for _, kv := range strings.Split(r.URL.RawQuery, "&") {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) == 2 {
+			k, _ := urlPathUnescape(parts[0])
+			if k == key {
+				v, _ := urlPathUnescape(parts[1])
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+func urlPathUnescape(s string) (string, error) {
+	// PathUnescape decodes %XX sequences but leaves '+' as '+' (unlike QueryUnescape)
+	return url.PathUnescape(s)
+}
+
 func getEnv(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -208,7 +231,7 @@ func handleTransferStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := r.URL.Query().Get("path")
+	path := getRawQueryParam(r, "path")
 	if path == "" {
 		http.Error(w, "path query param required", http.StatusBadRequest)
 		return
