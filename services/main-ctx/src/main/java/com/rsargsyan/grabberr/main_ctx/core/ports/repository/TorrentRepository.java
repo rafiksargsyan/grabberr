@@ -16,7 +16,7 @@ public interface TorrentRepository extends JpaRepository<Torrent, Long> {
   List<Long> findIdsByStatus(TorrentStatus status);
   @Query("SELECT t.id FROM Torrent t WHERE t.status IN :statuses")
   List<Long> findIdsByStatusIn(List<TorrentStatus> statuses);
-  @Modifying
+  @Modifying(flushAutomatically = true)
   @Query("DELETE FROM Torrent t WHERE t.id = :id")
   void deleteByIdDirect(@Param("id") Long id);
 }
