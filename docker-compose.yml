@@ -1,7 +1,9 @@
 services:
   backend:
-    image: rafiksargsyan/grabberr-backend:latest
+    image: rsargsyan/grabberr-backend:latest
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-postgres}
@@ -18,12 +20,22 @@ services:
       TRANSFER_AGENT_URL: ${TRANSFER_AGENT_URL}
       GRABBERR_DOWNLOADS_BASE_URL: ${GRABBERR_DOWNLOADS_BASE_URL}
     ports:
-      - "${BACKEND_PORT:-8082}:8080"
+      - "${BACKEND_PORT:-8090}:8080"
 
-  frontend:
-    image: rafiksargsyan/grabberr-frontend:latest
+  web-ui:
+    image: rsargsyan/grabberr-web-ui:latest
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
+      VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
+      VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
+      VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID}
+      VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-5174}:80"
     depends_on:
       - backend

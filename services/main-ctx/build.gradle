@@ -40,3 +40,19 @@ dependencies {
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+def dockerImage = 'rsargsyan/grabberr-backend:latest'
+
+tasks.register('dockerBuild', Exec) {
+    dependsOn bootJar
+    commandLine 'docker', 'build', '-t', dockerImage, '.'
+}
+
+tasks.register('dockerPush', Exec) {
+    commandLine 'docker', 'push', dockerImage
+}
+
+tasks.register('dockerPublish') {
+    dependsOn dockerBuild
+    finalizedBy dockerPush
+}
