@@ -45,11 +45,11 @@ def dockerImage = 'rsargsyan/grabberr-backend:latest'
 
 tasks.register('dockerBuild', Exec) {
     dependsOn bootJar
-    commandLine 'docker', 'build', '-t', dockerImage, '.'
+    commandLine 'sh', '-c', "docker build -t ${dockerImage} ."
 }
 
 tasks.register('dockerPush', Exec) {
-    commandLine 'docker', 'push', dockerImage
+    commandLine 'sh', '-c', "docker push ${dockerImage}"
 }
 
 tasks.register('dockerPublish') {
