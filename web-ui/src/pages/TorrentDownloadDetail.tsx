@@ -26,9 +26,26 @@ import {
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import CheckIcon from '@mui/icons-material/Check';
 import { useAuth } from '../hooks/useAuth';
-import { getTorrentDownload, listFileDownloads, claimFile, getFileDownload, deleteTorrentDownload, cacheFile, extendCacheLifetime, unclaimFile } from '../api/torrentDownloads';
+import { getTorrentDownload, listFileDownloads, claimFile, getFileDownload, deleteTorrentDownload, cacheFile, extendCacheLifetime, unclaimFile, getTorrentSource } from '../api/torrentDownloads';
 import type { TorrentDownloadDTO, FileDownloadDTO, TorrentStatus, FileDownloadStatus } from '../types/api.types';
+
+function fallbackCopy(text: string, onSuccess: () => void) {
+  const el = document.createElement('textarea');
+  el.value = text;
+  el.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(el);
+  el.focus();
+  el.select();
+  try {
+    document.execCommand('copy');
+    onSuccess();
+  } finally {
+    document.body.removeChild(el);
+  }
+}
 
 function TorrentStatusChip({ status }: { status: TorrentStatus }) {
   const color = status === 'READY' ? 'success' : status === 'FAILED' ? 'error' : 'warning';
@@ -64,6 +81,9 @@ export function TorrentDownloadDetail() {
   const [extendTarget, setExtendTarget] = useState<FileDownloadDTO | null>(null);
   const [extendDays, setExtendDays] = useState('30');
   const [extending, setExtending] = useState(false);
+  const [torrentSource, setTorrentSource] = useState<string | null>(null);
+  const [torrentSourceLoading, setTorrentSourceLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const fetchTorrent = useCallback(async () => {
     if (!id || !user || !accountId) return;
@@ -76,6 +96,28 @@ export function TorrentDownloadDetail() {
     const data = await getFileDownload(id, fileIndex, user, accountId);
     setFileDownloads((prev) => ({ ...prev, [fileIndex]: data }));
   }, [id, user, accountId]);
+
+  useEffect(() => {
+    if (!torrent || torrent.status !== 'READY' || !user || torrentSource !== null || torrentSourceLoading) return;
+    setTorrentSourceLoading(true);
+    getTorrentSource(torrent.infoHash, user)
+      .then((res) => setTorrentSource(res.value))
+      .catch(() => setTorrentSource(''))
+      .finally(() => setTorrentSourceLoading(false));
+  }, [torrent, user, torrentSource, torrentSourceLoading]);
+
+  const handleCopyMagnet = () => {
+    if (!torrentSource) return;
+    const finish = () => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    };
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(torrentSource).then(finish).catch(() => fallbackCopy(torrentSource, finish));
+    } else {
+      fallbackCopy(torrentSource, finish);
+    }
+  };
 
   // Initial load
   useEffect(() => {
@@ -214,6 +256,35 @@ export function TorrentDownloadDetail() {
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
           Submitted {new Date(torrent.createdAt).toLocaleString()}
         </Typography>
+
+        {torrent.status === 'READY' && (
+          <Box sx={{ mt: 2 }}>
+            {torrentSourceLoading && <CircularProgress size={16} />}
+            {!torrentSourceLoading && torrentSource && torrentSource.startsWith('magnet:') && (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={copied ? <CheckIcon /> : <ContentCopyIcon />}
+                onClick={handleCopyMagnet}
+                color={copied ? 'success' : 'primary'}
+              >
+                {copied ? 'Copied!' : 'Copy Magnet'}
+              </Button>
+            )}
+            {!torrentSourceLoading && torrentSource && !torrentSource.startsWith('magnet:') && (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<DownloadIcon />}
+                component={Link}
+                href={torrentSource}
+                download
+              >
+                Download .torrent
+              </Button>
+            )}
+          </Box>
+        )}
 
         {torrent.status === 'FETCHING_METADATA' && (
           <Alert severity="info" sx={{ mt: 2 }}>

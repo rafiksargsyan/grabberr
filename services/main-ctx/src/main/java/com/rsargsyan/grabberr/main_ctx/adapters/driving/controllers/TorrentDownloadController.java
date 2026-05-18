@@ -4,6 +4,7 @@ import com.rsargsyan.grabberr.main_ctx.core.app.FileDownloadService;
 import com.rsargsyan.grabberr.main_ctx.core.app.TorrentDownloadService;
 import com.rsargsyan.grabberr.main_ctx.core.app.dto.FileDownloadDTO;
 import com.rsargsyan.grabberr.main_ctx.core.app.dto.TorrentDownloadDTO;
+import com.rsargsyan.grabberr.main_ctx.core.app.dto.TorrentSourceDTO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -51,6 +52,11 @@ public class TorrentDownloadController {
   public ResponseEntity<TorrentDownloadDTO> getStatusByInfoHash(@PathVariable String infoHash) {
     String accountId = UserContextHolder.get().getAccountId();
     return ResponseEntity.ok(torrentDownloadService.getStatusByInfoHash(infoHash, accountId));
+  }
+
+  @GetMapping("/by-hash/{infoHash}/torrent-source")
+  public ResponseEntity<TorrentSourceDTO> getTorrentSourceByHash(@PathVariable String infoHash) {
+    return ResponseEntity.ok(torrentDownloadService.getTorrentSourceByHash(infoHash));
   }
 
   @GetMapping("/{id}")

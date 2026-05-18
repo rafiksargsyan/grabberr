@@ -2,6 +2,7 @@ package com.rsargsyan.grabberr.main_ctx.core.app;
 
 import com.rsargsyan.grabberr.main_ctx.core.Util;
 import com.rsargsyan.grabberr.main_ctx.core.app.dto.TorrentDownloadDTO;
+import com.rsargsyan.grabberr.main_ctx.core.app.dto.TorrentSourceDTO;
 import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.Account;
 import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.Torrent;
 import com.rsargsyan.grabberr.main_ctx.core.domain.aggregate.TorrentDownload;
@@ -160,6 +161,18 @@ public class TorrentDownloadService {
     } else {
       fileDownloadService.cancelClaimsForAccount(torrent.getId(), TSIDValidator.validate(accountIdStr));
     }
+  }
+
+  public TorrentSourceDTO getTorrentSourceByHash(String infoHash) {
+    Torrent torrent = torrentRepository.findByInfoHash(infoHash.toLowerCase())
+        .orElseThrow(ResourceNotFoundException::new);
+    if (torrent.getTorrentS3Key() != null) {
+      return new TorrentSourceDTO(objectStorageClient.generateSignedUrl(torrent.getTorrentS3Key()));
+    }
+    if (torrent.getDownloadUrl() != null) {
+      return new TorrentSourceDTO(torrent.getDownloadUrl());
+    }
+    throw new ResourceNotFoundException();
   }
 
   public void pollMetadata() {

@@ -54,3 +54,7 @@ export function extendCacheLifetime(id: string, fileIndex: number, days: number,
 export function unclaimFile(id: string, fileIndex: number, user: User, accountId: string): Promise<void> {
   return apiRequest<void>(`/torrent-download/${id}/file/${fileIndex}`, user, { method: 'DELETE', accountId });
 }
+
+export function getTorrentSource(infoHash: string, user: User): Promise<{ value: string }> {
+  return apiRequest<{ value: string }>(`/torrent-download/by-hash/${infoHash}/torrent-source`, user);
+}
