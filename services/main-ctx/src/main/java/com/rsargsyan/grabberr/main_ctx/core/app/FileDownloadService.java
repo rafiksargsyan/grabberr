@@ -160,7 +160,7 @@ public class FileDownloadService {
       return toDTO(cf);
     }
     try {
-      String s3Key = cf.getTorrent().getInfoHash() + "/" + cf.getPath();
+      String s3Key = cf.getTorrent().getInfoHash() + "/" + cf.getFileIndex() + extension(cf.getPath());
       fileTransferClient.startTransfer(cf.getPath(), s3Key);
       cf.markTransferring(cf.getPath(), s3Key);
       cachedFileRepository.save(cf);
@@ -557,5 +557,12 @@ public class FileDownloadService {
 
   private String s3Key(CachedFile cf) {
     return cf.getS3Key() != null ? cf.getS3Key() : cf.getPath();
+  }
+
+  private static String extension(String path) {
+    if (path == null) return "";
+    int dot = path.lastIndexOf('.');
+    int slash = path.lastIndexOf('/');
+    return (dot > slash && dot >= 0) ? path.substring(dot) : "";
   }
 }
