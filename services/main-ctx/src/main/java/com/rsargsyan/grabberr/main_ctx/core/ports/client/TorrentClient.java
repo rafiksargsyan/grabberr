@@ -3,6 +3,7 @@ package com.rsargsyan.grabberr.main_ctx.core.ports.client;
 import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.FileProgress;
 import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.TorrentFile;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -18,4 +19,5 @@ public interface TorrentClient {
   void removeTorrent(String infoHash, boolean deleteFiles);
   long getFreeSpaceBytes();
   Optional<String> getTorrentState(String infoHash);
+  Optional<Instant> getTorrentAddedOn(String infoHash);
 }

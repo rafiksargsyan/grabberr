@@ -16,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -33,7 +34,7 @@ public class QBittorrentClient implements TorrentClient {
   private record QbtMainData(QbtServerState server_state, java.util.Map<String, QbtTorrentData> torrents) {}
   private record QbtServerState(long free_space_on_disk) {}
   private record QbtTorrentData(long amount_left) {}
-  private record QbtTorrentInfo(String state) {}
+  private record QbtTorrentInfo(String state, Long added_on) {}
 
 
   @Value("${grabberr.qbittorrent.url}")
@@ -229,6 +230,24 @@ public class QBittorrentClient implements TorrentClient {
       return Optional.ofNullable(result.get(0).state());
     } catch (Exception e) {
       log.error("getTorrentState [{}]: unexpected error", infoHash, e);
+      return Optional.empty();
+    }
+  }
+
+  @Override
+  public Optional<Instant> getTorrentAddedOn(String infoHash) {
+    try {
+      List<QbtTorrentInfo> result = withSession(sid ->
+          restClient.get()
+              .uri("/api/v2/torrents/info?hashes={hash}", infoHash)
+              .header(HttpHeaders.COOKIE, "SID=" + sid)
+              .retrieve()
+              .body(new org.springframework.core.ParameterizedTypeReference<List<QbtTorrentInfo>>() {})
+      );
+      if (result == null || result.isEmpty() || result.get(0).added_on() == null) return Optional.empty();
+      return Optional.of(Instant.ofEpochSecond(result.get(0).added_on()));
+    } catch (Exception e) {
+      log.error("getTorrentAddedOn [{}]: unexpected error", infoHash, e);
       return Optional.empty();
     }
   }

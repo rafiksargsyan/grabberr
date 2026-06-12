@@ -44,6 +44,9 @@ public class FileDownloadService {
   @Value("${grabberr.download-timeout:PT24H}")
   private Duration downloadTimeout;
 
+  @Value("${grabberr.fetching-metadata-timeout:PT5M}")
+  private Duration fetchingMetadataTimeout;
+
   @Value("${grabberr.transfer-min-speed-bps:1048576}")
   private long transferMinSpeedBps;
 
@@ -123,6 +126,7 @@ public class FileDownloadService {
           return cf;
         });
 
+    expireIfS3Missing(cachedFile);
     if ((cachedFile.getStatus() == FileDownloadStatus.DONE && !cachedFile.isStoredInS3())
         || cachedFile.getStatus() == FileDownloadStatus.FAILED) {
       cachedFile.resetForReclaim();
@@ -170,21 +174,24 @@ public class FileDownloadService {
     return toDTO(cf);
   }
 
+  @Transactional
   public List<FileDownloadDTO> list(String torrentDownloadIdStr, String accountIdStr) {
     TorrentDownload torrentDownload = findTorrentDownload(torrentDownloadIdStr, accountIdStr);
-    return cachedFileRepository.findByTorrentId(torrentDownload.getTorrent().getId()).stream()
-        .map(this::toDTO)
-        .toList();
+    List<CachedFile> files = cachedFileRepository.findByTorrentId(torrentDownload.getTorrent().getId());
+    files.forEach(this::expireIfS3Missing);
+    return files.stream().map(this::toDTO).toList();
   }
 
+  @Transactional
   public FileDownloadDTO getStatus(String torrentDownloadIdStr, int fileIndex, String accountIdStr) {
     TorrentDownload torrentDownload = findTorrentDownload(torrentDownloadIdStr, accountIdStr);
     Long accountId = TSIDValidator.validate(accountIdStr);
-    return cachedFileRepository
+    CachedFile cf = cachedFileRepository
         .findByTorrentIdAndFileIndex(torrentDownload.getTorrent().getId(), fileIndex)
-        .filter(cf -> cachedFileClaimRepository.findByCachedFile_IdAndAccount_Id(cf.getId(), accountId).isPresent())
-        .map(this::toDTO)
+        .filter(c -> cachedFileClaimRepository.findByCachedFile_IdAndAccount_Id(c.getId(), accountId).isPresent())
         .orElseThrow(ResourceNotFoundException::new);
+    expireIfS3Missing(cf);
+    return toDTO(cf);
   }
 
   @Transactional
@@ -320,6 +327,19 @@ public class FileDownloadService {
       return;
     }
     if (torrentClient.getFiles(torrent.getInfoHash()).isEmpty()) {
+      java.util.Optional<String> qbtState = torrentClient.getTorrentState(torrent.getInfoHash());
+      if ("metaDL".equals(qbtState.orElse(null))) {
+        java.util.Optional<Instant> addedOn = torrentClient.getTorrentAddedOn(torrent.getInfoHash());
+        if (addedOn.isPresent() && addedOn.get().plus(fetchingMetadataTimeout).isBefore(Instant.now())) {
+          log.warn("Torrent [{}] stuck in metaDL beyond timeout, marking cachedFile [{}] as failed", torrent.getInfoHash(), cf.getId());
+          cf.markFailed();
+          cachedFileRepository.save(cf);
+          return;
+        }
+        log.warn("Torrent [{}] in metaDL state, waiting for metadata", torrent.getInfoHash());
+        cachedFileRepository.save(cf);
+        return;
+      }
       log.warn("Torrent [{}] missing from qBittorrent — re-adding", torrent.getInfoHash());
       if (torrent.getTorrentS3Key() != null) {
         try {
@@ -439,6 +459,19 @@ public class FileDownloadService {
       String infoHash = cf.getTorrent().getInfoHash();
       Torrent torrent = cf.getTorrent();
       if (torrentClient.getFiles(infoHash).isEmpty()) {
+        java.util.Optional<String> qbtState = torrentClient.getTorrentState(infoHash);
+        if ("metaDL".equals(qbtState.orElse(null))) {
+          java.util.Optional<Instant> addedOn = torrentClient.getTorrentAddedOn(infoHash);
+          if (addedOn.isPresent() && addedOn.get().plus(fetchingMetadataTimeout).isBefore(Instant.now())) {
+            log.warn("Torrent [{}] stuck in metaDL beyond timeout, marking cachedFile [{}] as failed", infoHash, cf.getId());
+            cf.markFailed();
+            cachedFileRepository.save(cf);
+            return;
+          }
+          log.warn("Torrent [{}] in metaDL state, waiting for metadata", infoHash);
+          cachedFileRepository.save(cf);
+          return;
+        }
         log.warn("Torrent [{}] missing from qBittorrent during download — re-adding", infoHash);
         if (torrent.getTorrentS3Key() != null) {
           try {
@@ -553,6 +586,15 @@ public class FileDownloadService {
         ? objectStorageClient.generateSignedUrl(s3Key(cf))
         : null;
     return FileDownloadDTO.from(cf, signedUrl);
+  }
+
+  private void expireIfS3Missing(CachedFile cf) {
+    if (cf.getStatus() != FileDownloadStatus.DONE || !cf.isStoredInS3()) return;
+    if (objectStorageClient.getSize(s3Key(cf)).isEmpty()) {
+      log.warn("S3 object missing for cachedFile=[{}] s3Key=[{}], expiring", cf.getId(), s3Key(cf));
+      cf.expireS3();
+      cachedFileRepository.save(cf);
+    }
   }
 
   private String s3Key(CachedFile cf) {
