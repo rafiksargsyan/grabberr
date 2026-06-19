@@ -5,6 +5,7 @@ import com.rsargsyan.grabberr.main_ctx.core.domain.valueobject.TorrentFile;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public interface TorrentClient {
@@ -20,4 +21,5 @@ public interface TorrentClient {
   long getFreeSpaceBytes();
   Optional<String> getTorrentState(String infoHash);
   Optional<Instant> getTorrentAddedOn(String infoHash);
+  Map<String, String> getInfoHashV2Map();
 }

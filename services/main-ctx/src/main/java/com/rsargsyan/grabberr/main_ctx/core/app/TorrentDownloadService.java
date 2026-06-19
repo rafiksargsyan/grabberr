@@ -149,7 +149,7 @@ public class TorrentDownloadService {
     if (isLast) {
       log.info("Last TorrentDownload removed for torrent [{}], cleaning up", torrent.getInfoHash());
       fileDownloadService.deleteAllForTorrent(torrent.getId());
-      torrentClient.removeTorrent(torrent.getInfoHash(), true);
+      torrentClient.removeTorrent(torrent.getEffectiveHash(), true);
       if (torrent.getTorrentS3Key() != null) {
         try {
           objectStorageClient.delete(torrent.getTorrentS3Key());
@@ -201,12 +201,12 @@ public class TorrentDownloadService {
     if (torrent.getCreatedAt().plus(timeout).isBefore(Instant.now())) {
       log.warn("Torrent [{}] timed out in {} state, marking failed", torrent.getInfoHash(), torrent.getStatus());
       torrent.markFailed();
-      torrentClient.removeTorrent(torrent.getInfoHash(), false);
+      torrentClient.removeTorrent(torrent.getEffectiveHash(), false);
       torrentRepository.save(torrent);
       return;
     }
 
-    Optional<String> qbtState = torrentClient.getTorrentState(torrent.getInfoHash());
+    Optional<String> qbtState = torrentClient.getTorrentState(torrent.getEffectiveHash());
     log.info("Torrent [{}] qBittorrent state: {}", torrent.getInfoHash(), qbtState.orElse("not found"));
 
     if (qbtState.isEmpty()) {
@@ -239,11 +239,11 @@ public class TorrentDownloadService {
     }
 
     // Any other active state — try to get files (covers torrent files that are instantly ready)
-    var files = torrentClient.getFiles(torrent.getInfoHash());
+    var files = torrentClient.getFiles(torrent.getEffectiveHash());
     if (files.isPresent() && !files.get().isEmpty()) {
       List<Integer> indices = files.get().stream().map(f -> f.index()).toList();
       try {
-        torrentClient.disableAllFiles(torrent.getInfoHash(), indices);
+        torrentClient.disableAllFiles(torrent.getEffectiveHash(), indices);
       } catch (Exception e) {
         log.warn("disableAllFiles [{}]: failed, continuing", torrent.getInfoHash(), e);
       }

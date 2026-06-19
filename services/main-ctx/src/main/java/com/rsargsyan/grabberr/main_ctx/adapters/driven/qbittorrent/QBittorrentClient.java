@@ -18,7 +18,9 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -35,6 +37,7 @@ public class QBittorrentClient implements TorrentClient {
   private record QbtServerState(long free_space_on_disk) {}
   private record QbtTorrentData(long amount_left) {}
   private record QbtTorrentInfo(String state, Long added_on) {}
+  private record QbtTorrentHashInfo(String hash, String infohash_v1, String infohash_v2) {}
 
 
   @Value("${grabberr.qbittorrent.url}")
@@ -265,6 +268,25 @@ public class QBittorrentClient implements TorrentClient {
     long totalAmountLeft = data.torrents() == null ? 0L :
         data.torrents().values().stream().mapToLong(QbtTorrentData::amount_left).sum();
     return data.server_state().free_space_on_disk() - totalAmountLeft;
+  }
+
+  @Override
+  public Map<String, String> getInfoHashV2Map() {
+    List<QbtTorrentHashInfo> all = withSession(sid ->
+        restClient.get()
+            .uri("/api/v2/torrents/info")
+            .header(HttpHeaders.COOKIE, "SID=" + sid)
+            .retrieve()
+            .body(new org.springframework.core.ParameterizedTypeReference<List<QbtTorrentHashInfo>>() {})
+    );
+    if (all == null) return Map.of();
+    return all.stream()
+        .filter(t -> t.infohash_v2() != null && !t.infohash_v2().isBlank())
+        .filter(t -> t.infohash_v1() != null && !t.infohash_v1().isBlank())
+        .collect(Collectors.toMap(
+            t -> t.infohash_v1().toLowerCase(),
+            t -> t.infohash_v2().substring(0, Math.min(40, t.infohash_v2().length())).toLowerCase()
+        ));
   }
 
   private void postForm(String uri, String body) {

@@ -227,7 +227,7 @@ public class FileDownloadService {
       cachedFileRepository.delete(cf);
       boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
-        torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+        torrentClient.removeTorrent(cf.getTorrent().getEffectiveHash(), true);
       }
     }
   }
@@ -326,10 +326,10 @@ public class FileDownloadService {
       cachedFileRepository.save(cf);
       return;
     }
-    if (torrentClient.getFiles(torrent.getInfoHash()).isEmpty()) {
-      java.util.Optional<String> qbtState = torrentClient.getTorrentState(torrent.getInfoHash());
+    if (torrentClient.getFiles(torrent.getEffectiveHash()).isEmpty()) {
+      java.util.Optional<String> qbtState = torrentClient.getTorrentState(torrent.getEffectiveHash());
       if ("metaDL".equals(qbtState.orElse(null))) {
-        java.util.Optional<Instant> addedOn = torrentClient.getTorrentAddedOn(torrent.getInfoHash());
+        java.util.Optional<Instant> addedOn = torrentClient.getTorrentAddedOn(torrent.getEffectiveHash());
         if (addedOn.isPresent() && addedOn.get().plus(fetchingMetadataTimeout).isBefore(Instant.now())) {
           log.warn("Torrent [{}] stuck in metaDL beyond timeout, marking cachedFile [{}] as failed", torrent.getInfoHash(), cf.getId());
           cf.markFailed();
@@ -356,18 +356,18 @@ public class FileDownloadService {
       }
       try {
         List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
-        torrentClient.disableAllFiles(torrent.getInfoHash(), allIndices);
+        torrentClient.disableAllFiles(torrent.getEffectiveHash(), allIndices);
       } catch (org.springframework.web.client.HttpClientErrorException.Conflict e) {
         log.warn("Torrent [{}] metadata not yet ready after re-add, will retry next cycle", torrent.getInfoHash());
         cachedFileRepository.save(cf);
         return;
       }
     } else {
-      java.util.Optional<String> state = torrentClient.getTorrentState(torrent.getInfoHash());
+      java.util.Optional<String> state = torrentClient.getTorrentState(torrent.getEffectiveHash());
       if (state.map(s -> s.startsWith("stopped") || s.startsWith("paused")).orElse(false)) {
         log.info("Torrent [{}] is in stopped state — disabling all files before enabling target", torrent.getInfoHash());
         List<Integer> allIndices = torrent.getFiles().stream().map(TorrentFile::index).toList();
-        torrentClient.disableAllFiles(torrent.getInfoHash(), allIndices);
+        torrentClient.disableAllFiles(torrent.getEffectiveHash(), allIndices);
       }
     }
     long fileSize = torrent.getFiles().stream()
@@ -381,7 +381,7 @@ public class FileDownloadService {
       cachedFileRepository.save(cf);
       return;
     }
-    torrentClient.enableFile(torrent.getInfoHash(), cf.getFileIndex());
+    torrentClient.enableFile(torrent.getEffectiveHash(), cf.getFileIndex());
     cf.markDownloading();
     cachedFileRepository.save(cf);
   }
@@ -409,7 +409,7 @@ public class FileDownloadService {
       cachedFileRepository.save(cf);
       boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
-        torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+        torrentClient.removeTorrent(cf.getTorrent().getEffectiveHash(), true);
       }
       return;
     }
@@ -441,7 +441,7 @@ public class FileDownloadService {
     if (cf.getStatus() != FileDownloadStatus.TRANSFERRING) {
       boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
-        torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+        torrentClient.removeTorrent(cf.getTorrent().getEffectiveHash(), true);
       }
     }
   }
@@ -456,7 +456,7 @@ public class FileDownloadService {
     if (downloadingStartedAt.plus(downloadTimeout).isBefore(Instant.now())) {
       cf.markFailed();
     } else {
-      String infoHash = cf.getTorrent().getInfoHash();
+      String infoHash = cf.getTorrent().getEffectiveHash();
       Torrent torrent = cf.getTorrent();
       if (torrentClient.getFiles(infoHash).isEmpty()) {
         java.util.Optional<String> qbtState = torrentClient.getTorrentState(infoHash);
@@ -531,7 +531,7 @@ public class FileDownloadService {
     if (cf.getStatus() != FileDownloadStatus.DOWNLOADING) {
       boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
-        torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+        torrentClient.removeTorrent(cf.getTorrent().getEffectiveHash(), true);
       }
     }
   }
@@ -552,7 +552,7 @@ public class FileDownloadService {
       cachedFileRepository.save(cf);
       boolean anyActive = cachedFileRepository.existsByTorrentIdAndStatusIn(cf.getTorrent().getId(), ACTIVE_STATUSES);
       if (!anyActive) {
-        torrentClient.removeTorrent(cf.getTorrent().getInfoHash(), true);
+        torrentClient.removeTorrent(cf.getTorrent().getEffectiveHash(), true);
       }
     }
   }

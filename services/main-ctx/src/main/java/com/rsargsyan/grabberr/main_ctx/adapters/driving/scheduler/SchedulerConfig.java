@@ -18,6 +18,9 @@ public class SchedulerConfig {
   @Value("${grabberr.download-poll-interval:PT60S}")
   private Duration downloadPollInterval;
 
+  @Value("${grabberr.infohash-sync-interval:PT1M}")
+  private Duration infoHashSyncInterval;
+
   @Bean
   public RecurringTask<Void> metadataPollingTask(MetadataPollingJob job) {
     return Tasks.recurring("metadata-polling", FixedDelay.of(metadataPollInterval))
@@ -28,5 +31,11 @@ public class SchedulerConfig {
   public RecurringTask<Void> fileDownloadPollingTask(FileDownloadPollingJob job) {
     return Tasks.recurring("file-download-polling", FixedDelay.of(downloadPollInterval))
         .execute((instance, ctx) -> job.poll());
+  }
+
+  @Bean
+  public RecurringTask<Void> infoHashSyncTask(InfoHashSyncJob job) {
+    return Tasks.recurring("infohash-sync", FixedDelay.of(infoHashSyncInterval))
+        .execute((instance, ctx) -> job.sync());
   }
 }

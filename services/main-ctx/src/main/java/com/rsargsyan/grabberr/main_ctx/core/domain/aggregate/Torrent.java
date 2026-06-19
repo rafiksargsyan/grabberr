@@ -18,6 +18,9 @@ public class Torrent extends AggregateRoot {
   private String infoHash;
 
   @Getter
+  private String infoHashV2;
+
+  @Getter
   @Column(columnDefinition = "text")
   private String downloadUrl; // null when submitted as an uploaded file
 
@@ -40,6 +43,15 @@ public class Torrent extends AggregateRoot {
   public Torrent(String infoHash, String downloadUrl) {
     this.infoHash = infoHash;
     this.downloadUrl = downloadUrl;
+  }
+
+  public void setInfoHashV2(String infoHashV2) {
+    this.infoHashV2 = infoHashV2;
+    touch();
+  }
+
+  public String getEffectiveHash() {
+    return infoHashV2 != null ? infoHashV2 : infoHash;
   }
 
   public void setTorrentS3Key(String torrentS3Key) {
